@@ -1,0 +1,1387 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# llm-proxy — manage LLM Proxy profiles + docker compose runtime.
+# Profiles live under $HOME (XDG dirs by default). Repo stays clean.
+
+PROG="llm-proxy"
+
+die() {   
+  printf '%s: %b\n' "${PROG:-llm-proxy}" "$*" >&2
+  exit 1
+  }
+
+warn() { echo "$PROG: $*" >&2; }
+is_macos() { [[ "${OSTYPE:-}" == "darwin"* ]]; }
+
+# ---------------------------
+# Paths (XDG + legacy support)
+# ---------------------------
+resolve_home() {
+  if [[ -n "${LLM_PROXY_HOME:-}" ]]; then
+    echo "${LLM_PROXY_HOME}"
+    return
+  fi
+  # Legacy: if ~/.llm-proxy exists, keep using it to avoid breaking existing installs.
+  if [[ -d "${HOME}/.llm-proxy" ]]; then
+    echo "${HOME}/.llm-proxy"
+    return
+  fi
+  echo ""
+}
+
+resolve_dirs() {
+  local legacy_home
+  legacy_home="$(resolve_home)"
+
+  if [[ -n "$legacy_home" ]]; then
+    CONFIG_DIR="${legacy_home}/config"
+    DATA_DIR="${legacy_home}/data"
+    CACHE_DIR="${legacy_home}/cache"
+  else
+    CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/${PROG}"
+    DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/${PROG}"
+    CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/${PROG}"
+  fi
+
+  PROFILES_DIR="${CONFIG_DIR}/profiles"
+  ACTIVE_FILE="${CONFIG_DIR}/active_profile"
+
+  # Per-profile "owned" dirs we can safely delete on profile delete:
+  PROFILE_DATA_ROOT="${DATA_DIR}/profiles"
+  PROFILE_LOG_ROOT="${DATA_DIR}/logs"
+  PROFILE_CACHE_ROOT="${CACHE_DIR}/profiles"
+
+  PROJECT_DIR_FILE="${CONFIG_DIR}/project_dir"
+}
+
+detect_compose_service_name() {
+  local compose_file="$1"
+
+  if [[ -n "${LLM_PROXY_SERVICE:-}" ]]; then
+    echo "${LLM_PROXY_SERVICE}"
+    return 0
+  fi
+
+  # Portable awk (macOS awk compatible). Picks first service under services:.
+  awk '
+    $1=="services:" {in_services=1; next}
+    in_services && $0 ~ /^[[:space:]][[:space:]][A-Za-z0-9_.-]+:[[:space:]]*$/ {
+      line=$0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/:[[:space:]]*$/, "", line)
+      print line
+      exit
+    }
+  ' "$compose_file"
+}
+
+ensure_dirs() {
+  mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$PROFILES_DIR" \
+           "$PROFILE_DATA_ROOT" "$PROFILE_LOG_ROOT" "$PROFILE_CACHE_ROOT"
+}
+
+# Reads a KEY from env-file (KEY=VALUE), strips quotes if any.
+envfile_get() {
+  local file="$1" key="$2"
+  local line
+  line="$(grep -E "^[[:space:]]*${key}=" "$file" | tail -n1 || true)"
+  [[ -n "$line" ]] || return 1
+  line="${line#*=}"
+  line="${line%$'\r'}"
+  # strip optional quotes
+  line="${line%\"}"; line="${line#\"}"
+  line="${line%\'}"; line="${line#\'}"
+  printf '%s' "$line"
+}
+
+derive_debug_image() {
+  local base="$1"
+  local repo tag
+  if [[ "$base" == *:* ]]; then
+    repo="${base%:*}"
+    tag="${base##*:}"
+  else
+    repo="$base"
+    tag="latest"
+  fi
+  echo "${repo}:${tag}-debug"
+}
+
+# Resolve the effective image name as docker compose sees it (including ${VAR:-default} fallbacks).
+# This avoids requiring LLM_IMAGE to be present in the profile env file.
+resolve_compose_image() {
+  local project_dir="$1" compose_env="$2" service="$3" override="$4"
+
+  local args=()
+  args+=(-f "${project_dir}/compose.yaml")
+  [[ -n "$override" ]] && args+=(-f "$override")
+
+  docker compose \
+    --project-directory "$project_dir" \
+    "${args[@]}" \
+    --env-file "$compose_env" \
+    config \
+  | awk -v svc="$service" '
+      $1=="services:" {in_services=1; next}
+      in_services && $0 ~ /^[[:space:]]{2}[A-Za-z0-9_.-]+:[[:space:]]*$/ {
+        line=$0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/:[[:space:]]*$/, "", line)
+        in_target = (line == svc)
+        next
+      }
+      in_target && $1=="image:" {print $2; exit}
+    '
+}
+
+# Source-of-truth for base image:
+# 1) if profile env explicitly defines LLM_IMAGE, use it
+# 2) otherwise ask docker compose to resolve defaults and return the final image value
+resolve_base_image() {
+  local project_dir="$1" compose_env="$2" service="$3" override="$4"
+  local base=""
+  base="$(envfile_get "$compose_env" "LLM_IMAGE" 2>/dev/null || true)"
+  if [[ -n "$base" ]]; then
+    echo "$base"
+    return 0
+  fi
+  base="$(resolve_compose_image "$project_dir" "$compose_env" "$service" "$override" || true)"
+  [[ -n "$base" ]] || return 1
+  echo "$base"
+}
+
+sanitize_profile_name() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || return 1
+  if [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    # Guardrail: runtime env files use "<name>.llm.env".
+    # If user can create profile "<name>.llm", it leads to cascading "<name>.llm.llm" etc.
+    if [[ "$name" == *.llm ]]; then
+      return 1
+    fi
+    echo "$name"
+    return 0
+  fi
+  return 1
+}
+
+profile_compose_env_path() {
+  local name="$1"
+  echo "${PROFILES_DIR}/${name}.env"
+}
+
+profile_runtime_env_path() {
+  local name="$1"
+  echo "${PROFILES_DIR}/${name}.llm.env"
+}
+
+get_active_profile() {
+  if [[ -f "$ACTIVE_FILE" ]]; then
+    sed -n '1p' "$ACTIVE_FILE" | tr -d '[:space:]'
+  else
+    echo ""
+  fi
+}
+
+set_active_profile() {
+  local name="$1"
+  printf '%s\n' "$name" > "$ACTIVE_FILE"
+}
+
+clear_active_profile() {
+  rm -f "$ACTIVE_FILE"
+}
+
+pick_fallback_profile() {
+  local exclude="${1:-}"
+
+  if [[ "$exclude" != "default" ]]; then
+    if [[ -f "$(profile_compose_env_path default)" || -f "$(profile_runtime_env_path default)" ]]; then
+      echo "default"
+      return 0
+    fi
+  fi
+
+  local names=()
+  local -A seen=()
+  local f name base
+  shopt -s nullglob
+  for f in "${PROFILES_DIR}/"*.env "${PROFILES_DIR}/"*.llm.env; do
+    base="${f##*/}"
+    if [[ "$base" == *.llm.env ]]; then
+      name="${base%.llm.env}"
+    else
+      name="${base%.env}"
+    fi
+
+    if [[ "$name" == "$exclude" ]]; then
+      continue
+    fi
+
+    if [[ -n "${seen[$name]:-}" ]]; then
+      continue
+    fi
+    seen[$name]=1
+    names+=("$name")
+  done
+  shopt -u nullglob
+
+  if [[ "${#names[@]}" -gt 0 ]]; then
+    mapfile -d '' -t names < <(printf '%s\0' "${names[@]}" | sort -z)
+    for name in "${names[@]}"; do
+      echo "$name"
+      return 0
+    done
+  fi
+
+  return 1
+}
+
+list_profiles() {
+  local active bold reset green blue color_ok
+  active="$(get_active_profile)"
+
+  bold=""
+  reset=""
+  green=""
+  blue=""
+  color_ok=0
+
+  if [[ -t 1 ]]; then
+    if command -v tput >/dev/null 2>&1; then
+      local colors
+      colors="$(tput colors 2>/dev/null || echo 0)"
+      if [[ "$colors" -ge 8 ]]; then
+        color_ok=1
+        green="$(tput setaf 2 2>/dev/null || echo '')"
+        blue="$(tput setaf 4 2>/dev/null || echo '')"
+      fi
+      bold="$(tput bold 2>/dev/null || echo '')"
+      reset="$(tput sgr0 2>/dev/null || echo '')"
+    fi
+
+    [[ -z "$bold" ]] && bold=$'\033[1m'
+    [[ -z "$reset" ]] && reset=$'\033[0m'
+    if [[ "$color_ok" -eq 1 ]]; then
+      [[ -z "$green" ]] && green=$'\033[32m'
+      [[ -z "$blue" ]] && blue=$'\033[34m'
+    fi
+  fi
+
+  local name
+  while IFS= read -r name; do
+    if [[ "$name" == "$active" ]]; then
+      local color
+      color=""
+      if [[ "$color_ok" -eq 1 ]]; then
+        color="${green:-${blue:-}}"
+        if [[ -z "$color" ]]; then
+          color="$blue"
+        fi
+      fi
+
+      if [[ -t 1 ]]; then
+        printf "* %s%s%s\n" "${color}${bold}" "$name" "$reset"
+      else
+        echo "* $name"
+      fi
+    else
+      echo "  $name"
+    fi
+  done < <(list_profile_names)
+}
+
+list_profile_names() {
+  shopt -s nullglob
+  local f
+  for f in "${PROFILES_DIR}/"*.env; do
+    if [[ "$f" == *.llm.env ]]; then
+      continue
+    fi
+    basename "$f" .env
+  done
+  shopt -u nullglob
+}
+
+# ---------------------------
+# Project dir (where compose.yaml lives)
+# ---------------------------
+resolve_project_dir_soft() {
+  if [[ -n "${LLM_PROXY_PROJECT_DIR:-}" ]]; then
+    [[ -f "${LLM_PROXY_PROJECT_DIR}/compose.yaml" ]] || return 1
+    echo "${LLM_PROXY_PROJECT_DIR}"
+    return 0
+  fi
+
+  if [[ -f "${PROJECT_DIR_FILE:-}" ]]; then
+    local saved
+    saved="$(sed -n '1p' "$PROJECT_DIR_FILE" | tr -d '\r\n')"
+    if [[ -n "$saved" && -f "${saved}/compose.yaml" ]]; then
+      echo "$saved"
+      return 0
+    fi
+  fi
+
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || return 1
+  if [[ -f "${here}/compose.yaml" ]]; then
+    echo "${here}"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_project_dir() {
+  # 1) explicit override
+  if [[ -n "${LLM_PROXY_PROJECT_DIR:-}" ]]; then
+    [[ -f "${LLM_PROXY_PROJECT_DIR}/compose.yaml" ]] || die "compose.yaml not found in LLM_PROXY_PROJECT_DIR=${LLM_PROXY_PROJECT_DIR}"
+    echo "${LLM_PROXY_PROJECT_DIR}"
+    return
+  fi
+
+  # 2) config fallback (set during install)
+  if [[ -f "${PROJECT_DIR_FILE:-}" ]]; then
+    local saved
+    saved="$(sed -n '1p' "$PROJECT_DIR_FILE" | tr -d '\r\n')"
+    if [[ -n "$saved" && -f "${saved}/compose.yaml" ]]; then
+      echo "$saved"
+      return
+    fi
+  fi
+
+  # 3) config fallback (set during install)
+  if [[ -f "${PROJECT_DIR_FILE:-}" ]]; then
+    local saved
+    saved="$(sed -n '1p' "$PROJECT_DIR_FILE" | tr -d '\r\n')"
+    if [[ -n "$saved" && -f "${saved}/compose.yaml" ]]; then
+      echo "$saved"
+      return
+    fi
+  fi
+
+  # 4) relative to script location (works when running from repo checkout)
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [[ -f "${here}/compose.yaml" ]]; then
+    echo "${here}"
+    return
+  fi
+
+  die "cannot locate compose.yaml. Run from repo root, or set LLM_PROXY_PROJECT_DIR=/path/to/repo"
+}
+
+compose_services_from_file() {
+  local compose_file="$1"
+  awk '
+    $1=="services:" {in_services=1; next}
+    in_services && $0 ~ /^[[:space:]][[:space:]][A-Za-z0-9_.-]+:[[:space:]]*$/ {
+      line=$0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/:[[:space:]]*$/, "", line)
+      print line
+      next
+    }
+    in_services && $0 !~ /^[[:space:]]/ {exit}
+  ' "$compose_file"
+}
+
+completion_service_names() {
+  local project_dir compose_file
+  project_dir="$(resolve_project_dir_soft)" || return 0
+  compose_file="${project_dir}/compose.yaml"
+  [[ -f "$compose_file" ]] || return 0
+
+  compose_services_from_file "$compose_file"
+}
+
+completion_profiles() {
+  # Prints one profile per line for completion consumers.
+  list_profile_names
+}
+
+commands_list() {
+  cat <<'EOF'
+help
+list
+ls
+active
+init
+create
+use
+switch
+edit
+edit-compose
+up
+start
+run
+debug
+down
+stop
+status
+logs
+delete
+rm
+remove
+paths
+install
+uninstall
+reinstall
+completion
+EOF
+}
+
+completion_commands() {
+  # Prints one command per line for completion consumers.
+  commands_list
+}
+
+completion_script_bash() {
+  cat <<'EOF'
+_llm_proxy_completions() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  local cmd="${COMP_WORDS[1]:-}"
+
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    local cmds
+    cmds="$("${COMP_WORDS[0]}" __complete commands 2>/dev/null | tr '\n' ' ')"
+    COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$cmd" == "completion" ]]; then
+    COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$cmd" == "logs" ]]; then
+    local profiles services first
+    profiles="$("${COMP_WORDS[0]}" __complete profiles 2>/dev/null | tr '\n' ' ')"
+    services="$("${COMP_WORDS[0]}" __complete services 2>/dev/null | tr '\n' ' ')"
+    first="${COMP_WORDS[2]:-}"
+
+    if [[ $COMP_CWORD -eq 2 ]]; then
+      COMPREPLY=( $(compgen -W "$profiles $services" -- "$cur") )
+      return 0
+    fi
+
+    COMPREPLY=( $(compgen -W "$services" -- "$cur") )
+    return 0
+  fi
+
+  case "${prev}" in
+    use|switch|up|debug|down|status|delete|edit|edit-compose)
+      local profiles
+      profiles="$("${COMP_WORDS[0]}" __complete profiles 2>/dev/null | tr '\n' ' ')"
+      COMPREPLY=( $(compgen -W "$profiles" -- "$cur") )
+      return 0
+      ;;
+  esac
+
+  return 0
+}
+complete -F _llm_proxy_completions llm-proxy
+EOF
+}
+
+completion_script_zsh() {
+  cat <<'EOF'
+#compdef llm-proxy
+
+_llm_proxy() {
+  local -a commands
+  local cmd_bin="${words[1]:-llm-proxy}"
+  commands=(${(f)$(_call_program commands "$cmd_bin" __complete commands)})
+
+  local context state state_descr line
+  _arguments -C \
+    '1:command:->command' \
+    '2:target:->target' \
+    '*::args:->args' && return 0
+
+  case $state in
+    command)
+      _describe -t commands "llm-proxy commands" commands
+      ;;
+    target)
+      case $line[1] in
+        use|switch|up|debug|down|status|logs|delete|edit|edit-compose)
+          local -a profiles services
+          profiles=($(_call_program profiles "$words[1]" __complete profiles))
+          if [[ $line[1] == logs ]]; then
+            services=($(_call_program services "$words[1]" __complete services))
+            _alternative \
+              "profiles:profiles:($profiles)" \
+              "services:services:($services)"
+          else
+            _values 'profiles' $profiles
+          fi
+          ;;
+        completion)
+          _values 'shell' bash zsh fish
+          ;;
+      esac
+      ;;
+    args)
+      if [[ $line[1] == logs ]]; then
+        _values 'services' $(_call_program services "$words[1]" __complete services)
+      fi
+      ;;
+  esac
+}
+
+_llm_proxy "$@"
+EOF
+}
+
+completion_script_fish() {
+  cat <<'EOF'
+function __llm_proxy_complete_commands
+  llm-proxy __complete commands 2>/dev/null
+end
+
+function __llm_proxy_complete_profiles
+  llm-proxy __complete profiles 2>/dev/null
+end
+
+function __llm_proxy_complete_services
+  llm-proxy __complete services 2>/dev/null
+end
+
+complete -c llm-proxy -n "__fish_use_subcommand" -a "(__llm_proxy_complete_commands)" -d "commands"
+complete -c llm-proxy -n "__fish_seen_subcommand_from use switch up debug down status logs delete edit edit-compose" -a "(__llm_proxy_complete_profiles)"
+complete -c llm-proxy -n "__fish_seen_subcommand_from logs" -a "(__llm_proxy_complete_services)"
+complete -c llm-proxy -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+EOF
+}
+
+print_completion() {
+  local shell="$1"
+  case "$shell" in
+    bash) completion_script_bash ; return 0 ;;
+    zsh) completion_script_zsh ; return 0 ;;
+    fish) completion_script_fish ; return 0 ;;
+    *) die "unknown shell for completion: $shell (supported: bash zsh fish)" ;;
+  esac
+}
+
+# ---------------------------
+# Template & editing
+# ---------------------------
+runtime_env_template() {
+  cat <<'EOF'
+# Runtime env for llm-proxy (matches llm/config/settings.py)
+
+# Service
+LOG_LEVEL=INFO
+ENV=development
+TESTING=false
+
+# Upstream LLM
+LLM_API_BASE=https://api.llm7.io/v1
+LLM_API_KEY=unused
+LLM_DEFAULT_MODEL_NAME=deepseek-v3-0324
+# Optional hard override (forces this model for all requests)
+# LLM_MODEL_NAME=deepseek-v3-0324
+LLM_TEMPERATURE=0.0
+LLM_TOP_P=1.0
+LLM_MAX_TOKENS=50000
+LLM_VERBOSE=true
+LLM_TIMEOUT=300.0
+
+# Concurrency / queue
+LLM_MAX_CONCURRENT=1
+LLM_QUEUE_MAX_LEN=100
+LLM_PRIORITY_DEFAULT=p2
+
+# Prefer map-based config (JSON string).
+LLM_PRIORITY_SLOTS={"p1":2,"p2":1,"p3":1}
+
+# Cache
+LLM_CACHE_ENABLED=true
+LLM_CACHE_TTL=600000
+CACHE_CONTAINER_DIR=/cache
+LLM_CACHE_FILE=llm_cache.sqlite
+# If LLM_CACHE_PATH is explicitly set -> it has priority.
+# LLM_CACHE_PATH=/cache/llm_cache.sqlite
+EOF
+}
+
+compose_env_template() {
+  local name="$1"
+  local cache_root logs_root dumps_root
+  cache_root="${PROFILE_CACHE_ROOT}/${name}"
+  logs_root="${PROFILE_LOG_ROOT}/${name}"
+  dumps_root="${PROFILE_DATA_ROOT}/${name}/crash_dumps"
+
+  cat <<EOF
+# Compose substitution env for profile: ${name}
+
+# Image/build
+LLM_IMAGE=llm-proxy:latest
+LLM_BUILD_CONTEXT=.
+LLM_DOCKERFILE=Dockerfile
+
+# Ports
+LLM_PORT=8002
+
+# Mounts (host)
+CACHE_HOST_DIR=${cache_root}
+LOGS_HOST_DIR=${logs_root}
+DUMP_HOST_DIR=${dumps_root}
+
+# Mounts (container)
+CACHE_CONTAINER_DIR=/cache
+LOGS_CONTAINER_DIR=/logs
+DUMP_CONTAINER_DIR=/crash_dumps
+
+# Optional (compose interpolation only)
+LOG_LEVEL=INFO
+EOF
+}
+
+run_editor() {
+  local file="$1"
+
+  # Non-interactive environments: don't block.
+  if [[ ! -t 0 ]]; then
+    warn "non-interactive session; not opening editor for: $file (set EDITOR or LLM_PROXY_EDITOR to edit)"
+    return 0
+  fi
+
+  if [[ -n "${LLM_PROXY_EDITOR:-}" ]]; then
+    eval "${LLM_PROXY_EDITOR} \"${file}\""
+    return
+  fi
+
+  if [[ -n "${EDITOR:-}" ]]; then
+    eval "${EDITOR} \"${file}\""
+    return
+  fi
+
+  if is_macos; then
+    /usr/bin/open -W -a "TextEdit" "$file"
+  else
+    command -v nano >/dev/null 2>&1 || die "nano not found; set EDITOR or LLM_PROXY_EDITOR"
+    nano "$file"
+  fi
+}
+
+ensure_profile_prefilled() {
+  local name="$1"
+  local compose_file runtime_file
+
+  compose_file="$(profile_compose_env_path "$name")"
+  runtime_file="$(profile_runtime_env_path "$name")"
+
+  mkdir -p "$(dirname "$compose_file")"
+  mkdir -p "${PROFILE_CACHE_ROOT}/${name}" "${PROFILE_LOG_ROOT}/${name}" "${PROFILE_DATA_ROOT}/${name}/crash_dumps"
+
+  if [[ ! -f "$runtime_file" ]]; then
+    runtime_env_template > "$runtime_file"
+  fi
+  if [[ ! -f "$compose_file" ]]; then
+    compose_env_template "$name" > "$compose_file"
+  fi
+}
+
+ensure_base_image() {
+  local name="$1" project_dir="$2" compose_env="$3" service="$4"
+
+  local base_image
+  base_image="$(resolve_base_image "$project_dir" "$compose_env" "$service" "$(compose_override_path "$name")")" \
+    || die "cannot resolve base image (set LLM_IMAGE in $compose_env or ensure compose.yaml has an image default)"
+
+  if docker image inspect "$base_image" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Base image not found: $base_image"
+  echo "Building base image via compose..."
+  compose_cmd "$name" build "$service"
+} 
+
+# ---------------------------
+# Docker compose helpers (ironclad env injection via override file)
+# ---------------------------
+docker_available() { command -v docker >/dev/null 2>&1; }
+require_docker() { docker_available || die "docker not found"; }
+
+compose_override_path() {
+  local name="$1"
+  echo "${PROFILES_DIR}/${name}.override.yml"
+}
+
+profile_exists() {
+  local name="$1"
+  [[ -f "$(profile_compose_env_path "$name")" ]]
+}
+
+write_compose_override() {
+  local name="$1"
+  local runtime_env compose_env override project_dir base_compose service
+  runtime_env="$(profile_runtime_env_path "$name")"
+  compose_env="$(profile_compose_env_path "$name")"
+  override="$(compose_override_path "$name")"
+
+  project_dir="$(resolve_project_dir)"
+  base_compose="${project_dir}/compose.yaml"
+  service="$(detect_compose_service_name "$base_compose")"
+
+  [[ -n "$service" ]] || die "cannot detect service name from $base_compose. Set LLM_PROXY_SERVICE to your service name."
+
+  mkdir -p "$(dirname "$override")"
+  cat >"$override" <<EOF
+services:
+  ${service}:
+    env_file:
+      - "$compose_env"
+      - "$runtime_env"
+EOF
+}
+
+validate_runtime_env_soft() {
+  local name="$1"
+  local runtime_env compose_env project_dir base_compose service
+  runtime_env="$(profile_runtime_env_path "$name")"
+  compose_env="$(profile_compose_env_path "$name")"
+  [[ -f "$runtime_env" && -f "$compose_env" ]] || return 1
+
+  project_dir="$(resolve_project_dir_soft)" || return 1
+  base_compose="${project_dir}/compose.yaml"
+  service="$(detect_compose_service_name "$base_compose")"
+  [[ -n "$service" ]] || return 1
+
+  local v
+  for v in CACHE_HOST_DIR CACHE_CONTAINER_DIR LOGS_HOST_DIR LOGS_CONTAINER_DIR; do
+    if ! envfile_get "$compose_env" "$v" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+write_compose_override_soft() {
+  local name="$1"
+  local runtime_env compose_env override project_dir base_compose service
+  runtime_env="$(profile_runtime_env_path "$name")"
+  compose_env="$(profile_compose_env_path "$name")"
+  override="$(compose_override_path "$name")"
+
+  project_dir="$(resolve_project_dir_soft)" || return 1
+  base_compose="${project_dir}/compose.yaml"
+  service="$(detect_compose_service_name "$base_compose")"
+  [[ -n "$service" ]] || return 1
+
+  mkdir -p "$(dirname "$override")" || return 1
+  cat >"$override" <<EOF || return 1
+services:
+  ${service}:
+    env_file:
+      - "$compose_env"
+      - "$runtime_env"
+EOF
+}
+
+can_compose_operate() {
+  local name="$1"
+  validate_runtime_env_soft "$name"
+}
+
+validate_runtime_env_or_die() {
+  local name="$1"
+  ensure_profile_prefilled "$name"
+  validate_compose_env_or_die "$name"
+  local runtime_env; runtime_env="$(profile_runtime_env_path "$name")"
+  [[ -f "$runtime_env" ]] || die "runtime env file not found: $runtime_env"
+  write_compose_override "$name"
+}
+
+validate_compose_env_or_die() {
+  local name="$1"
+  local compose_env runtime_env
+  compose_env="$(profile_compose_env_path "$name")"
+  runtime_env="$(profile_runtime_env_path "$name")"
+  [[ -f "$compose_env" ]] || die "profile not found: $name (compose env missing)\ncompose env: $compose_env\nruntime env: $runtime_env\nrun: llm-proxy edit-compose $name"
+
+  # These vars are required for safe volume binding (compose interpolation).
+  local v
+  for v in CACHE_HOST_DIR CACHE_CONTAINER_DIR LOGS_HOST_DIR LOGS_CONTAINER_DIR; do
+    if ! envfile_get "$compose_env" "$v" >/dev/null 2>&1; then
+      die "missing required $v in compose env\ncompose env: $compose_env\nruntime env: $runtime_env\nrun: llm-proxy edit-compose $name"
+    fi
+  done
+}
+
+compose_cmd() {
+  local name="$1"; shift || true
+  validate_runtime_env_or_die "$name"
+
+  local project_dir compose_env project_name override
+  project_dir="$(resolve_project_dir)"
+  compose_env="$(profile_compose_env_path "$name")"
+  override="$(compose_override_path "$name")"
+  project_name="${PROG}-${name}"
+
+  [[ -f "$compose_env" ]] || die "profile not found: $name (missing compose env: $compose_env)"
+
+  require_docker
+  docker compose \
+    --project-directory "$project_dir" \
+    -f "${project_dir}/compose.yaml" \
+    -f "$override" \
+    --env-file "$compose_env" \
+    -p "$project_name" \
+    "$@"
+}
+
+compose_cmd_debug() {
+  local name="$1"; shift || true
+  validate_runtime_env_or_die "$name"
+
+  [[ $# -gt 0 ]] || die "compose subcommand required (e.g. up -d)"
+
+  local project_dir compose_env project_name override debug_file base_compose service
+  project_dir="$(resolve_project_dir)"
+  compose_env="$(profile_compose_env_path "$name")"
+  [[ -f "$compose_env" ]] || die "profile not found: $name"
+  project_name="${PROG}-${name}"
+
+  base_compose="${project_dir}/compose.yaml"
+  service="$(detect_compose_service_name "$base_compose")"
+  [[ -n "$service" ]] || die "cannot detect service name from $base_compose (set LLM_PROXY_SERVICE)"
+
+  write_compose_override "$name"
+  override="$(compose_override_path "$name")"
+
+  debug_file="${project_dir}/compose-debug.yaml"
+  [[ -f "$debug_file" ]] || die "compose-debug.yaml not found in project dir: $project_dir"
+
+  require_docker
+
+  local base_image debug_image
+  base_image="$(resolve_base_image "$project_dir" "$compose_env" "$service" "$override")" \
+    || die "cannot resolve base image (set LLM_IMAGE in $compose_env or ensure compose.yaml has an image default)"
+  export LLM_BASE_IMAGE="$base_image"
+  debug_image="$(derive_debug_image "$base_image")"
+
+  ensure_base_image "$name" "$project_dir" "$compose_env" "$service"
+
+  # Ключевой момент: прокидываем LLM_DEBUG_IMAGE только на debug-запуск
+  LLM_DEBUG_IMAGE="$debug_image" docker compose \
+    --project-directory "$project_dir" \
+    -f "${project_dir}/compose.yaml" \
+    -f "$override" \
+    -f "$debug_file" \
+    --env-file "$compose_env" \
+    -p "$project_name" \
+    "$@"
+}
+
+
+compose_up() {
+  local name="$1"
+  compose_cmd "$name" up -d --build --remove-orphans
+  echo "Started: ${PROG}-${name}"
+}
+
+compose_debug() {
+  local name="$1"
+  compose_cmd_debug "$name" up -d --build --remove-orphans
+  echo "Started: Debug ${PROG}-${name}"
+}
+
+compose_down_best_effort() {
+  local name="$1"
+  docker_available || return 0
+
+  local project_name="${PROG}-${name}"
+
+  if can_compose_operate "$name"; then
+    local project_dir compose_env override
+    if project_dir="$(resolve_project_dir_soft)"; then :; else project_dir=""; fi
+    if [[ -n "$project_dir" ]]; then
+      local compose_args=()
+      compose_env="$(profile_compose_env_path "$name")"
+      override="$(compose_override_path "$name")"
+      if write_compose_override_soft "$name"; then
+        if [[ -f "$override" ]]; then
+          compose_args+=(-f "$override")
+        fi
+      fi
+
+      docker compose \
+        --project-directory "$project_dir" \
+        -f "${project_dir}/compose.yaml" \
+        "${compose_args[@]}" \
+        --env-file "$compose_env" \
+        -p "$project_name" \
+        down --remove-orphans >/dev/null 2>&1 || true
+      return 0
+    fi
+  fi
+
+  local containers networks
+  containers="$(docker ps -aq --filter "label=com.docker.compose.project=${project_name}" || true)"
+  if [[ -n "$containers" ]]; then
+    mapfile -t containers <<<"$containers"
+    if [[ "${#containers[@]}" -gt 0 ]]; then
+      docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  networks="$(docker network ls -q --filter "label=com.docker.compose.project=${project_name}" || true)"
+  if [[ -n "$networks" ]]; then
+    mapfile -t networks <<<"$networks"
+    if [[ "${#networks[@]}" -gt 0 ]]; then
+      docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+compose_status() {
+  local name="$1"
+  validate_runtime_env_or_die "$name"
+  compose_cmd "$name" ps
+}
+
+compose_logs() {
+  local name="$1"; shift || true
+  local services=("$@")
+
+  if can_compose_operate "$name"; then
+    local project_dir compose_env override
+    if project_dir="$(resolve_project_dir_soft)"; then :; else project_dir=""; fi
+    if [[ -n "$project_dir" ]]; then
+      local compose_args=()
+      compose_env="$(profile_compose_env_path "$name")"
+      override="$(compose_override_path "$name")"
+      if write_compose_override_soft "$name"; then
+        if [[ -f "$override" ]]; then
+          compose_args+=(-f "$override")
+        fi
+      fi
+
+      docker compose \
+        --project-directory "$project_dir" \
+        -f "${project_dir}/compose.yaml" \
+        "${compose_args[@]}" \
+        --env-file "$compose_env" \
+        -p "${PROG}-${name}" \
+        logs -f --tail=200 "${services[@]}"
+      return $?
+    fi
+  fi
+
+  docker_available || die "docker not found"
+  local project_name
+  local -a containers=()
+  project_name="${PROG}-${name}"
+
+  if [[ "${#services[@]}" -gt 0 ]]; then
+    local svc list
+    for svc in "${services[@]}"; do
+      list="$(docker ps -aq --filter "label=com.docker.compose.project=${project_name}" --filter "label=com.docker.compose.service=${svc}" || true)"
+      if [[ -n "$list" ]]; then
+        containers+=($list)
+      fi
+    done
+  else
+    mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=${project_name}" || true)
+  fi
+
+  if [[ "${#containers[@]}" -eq 0 ]]; then
+    die "no containers found for project ${project_name}; profile may be stopped or invalid"
+  fi
+  if [[ "${#containers[@]}" -gt 1 ]]; then
+    echo "Multiple containers found for project ${project_name}; following most recent: ${containers[0]}" >&2
+    echo "Other containers:" >&2
+    printf '  %s\n' "${containers[@]:1}" >&2
+  fi
+  docker logs -f --tail=200 "${containers[0]}"
+}
+
+# ---------------------------
+# UX
+# ---------------------------
+confirm() {
+  local prompt="$1"
+  local assume="${2:-}"
+  if [[ "${LLM_PROXY_ASSUME_YES:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$assume" == "1" ]]; then
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    die "refusing to prompt on non-interactive stdin; pass --yes"
+  fi
+  read -r -p "$prompt [y/N] " ans || true
+  [[ "${ans:-}" == "y" || "${ans:-}" == "Y" ]]
+}
+
+usage() {
+  cat <<EOF
+$PROG — manage llm-proxy profiles and docker compose runtime
+
+Usage:
+  $PROG help
+  $PROG list
+  $PROG active
+  $PROG init [name]          # create + use + open editor for runtime env (first-run friendly)
+  $PROG create <name>
+  $PROG use <name>
+  $PROG edit [name]          # edit runtime env (<name>.llm.env)
+  $PROG edit-compose [name]  # edit compose env (<name>.env)
+  $PROG up [name]            # start active or provided profile (compose up -d --build)
+  $PROG debug [name]         # start in debug mode (compose-debug.yaml + debugpy attach)
+  $PROG down [name]          # stop active or provided profile (compose down)
+  $PROG status [name]
+  $PROG logs [name]
+  $PROG delete <name> [--yes]
+
+Optional:
+  $PROG install|uninstall|reinstall
+  $PROG completion <shell>   # print shell completion (bash|zsh|fish)
+EOF
+}
+
+# ---------------------------
+# Install helpers
+# ---------------------------
+path_has_dir() {
+  local d="$1"
+  case ":${PATH}:" in
+    *":${d}:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+append_path_export_once() {
+  local rc="$1"
+  local marker="# llm-proxy: add ~/.local/bin to PATH"
+  local line='export PATH="$HOME/.local/bin:$PATH"'
+  touch "$rc" 2>/dev/null || true
+  if grep -Fq "$line" "$rc" 2>/dev/null; then
+    return 0
+  fi
+  { echo ""; echo "$marker"; echo "$line"; } >> "$rc"
+}
+
+ensure_local_bin_in_path() {
+  local bin_dir="${HOME}/.local/bin"
+  if path_has_dir "$bin_dir"; then return 0; fi
+  local shell="${SHELL:-}"
+  if [[ "$shell" == */zsh ]]; then
+    append_path_export_once "${HOME}/.zprofile"
+    append_path_export_once "${HOME}/.zshrc"
+  elif [[ "$shell" == */bash ]]; then
+    append_path_export_once "${HOME}/.bash_profile"
+    append_path_export_once "${HOME}/.bashrc"
+  else
+    append_path_export_once "${HOME}/.zprofile"
+    append_path_export_once "${HOME}/.zshrc"
+    append_path_export_once "${HOME}/.bash_profile"
+    append_path_export_once "${HOME}/.bashrc"
+  fi
+  warn "~/.local/bin is not currently in PATH."
+  warn 'Run: export PATH="$HOME/.local/bin:$PATH" (or open a new terminal)'
+}
+
+cmd_install() {
+  local bin_dir="${HOME}/.local/bin"
+  local target="${bin_dir}/${PROG}"
+
+  local project_dir=""
+  if [[ "${1:-}" == "--project-dir" ]]; then
+    project_dir="${2:-}"
+    [[ -n "$project_dir" ]] || die "install --project-dir requires a path"
+  else
+    # auto-detect if running from repo root
+    if [[ -f "${PWD}/compose.yaml" ]]; then
+      project_dir="${PWD}"
+    fi
+  fi
+
+  mkdir -p "$bin_dir"
+  install -m 0755 "$0" "$target"
+  echo "Installed to $target"
+  ensure_local_bin_in_path
+
+  if [[ -n "$project_dir" ]]; then
+    mkdir -p "$CONFIG_DIR"
+    printf "%s\n" "$project_dir" > "$PROJECT_DIR_FILE"
+    echo "Default project dir saved to: $PROJECT_DIR_FILE"
+  else
+    warn "Tip: set default project dir via:"
+    warn "  $PROG install --project-dir /path/to/llm-proxy"
+  fi
+}
+
+
+cmd_uninstall() {
+  local target="${HOME}/.local/bin/${PROG}"
+  rm -f "$target"
+  echo "Removed $target"
+}
+
+cmd_reinstall() {
+  cmd_uninstall
+  cmd_install
+}
+
+# ---------------------------
+# Commands
+# ---------------------------
+main() {
+  resolve_dirs
+  ensure_dirs
+
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    __complete)
+      local target="${1:-}"
+      case "$target" in
+        commands) completion_commands ;;
+        profiles) completion_profiles ;;
+        services) completion_service_names ;;
+        *) exit 0 ;;
+      esac
+      exit 0
+      ;;
+    help|-h|--help) usage ;;
+    list|ls) list_profiles ;;
+    paths)
+      # Print resolved paths (so Makefile/docs can share the same source of truth).
+      # Usage:
+      #   llm-proxy paths
+      #   llm-proxy paths profiles_dir
+      #   llm-proxy paths compose_env <profile>
+      #   llm-proxy paths runtime_env <profile>
+      local key="${1:-}"
+      local name="${2:-}"
+      if [[ -z "$key" ]]; then
+        printf "config_dir=%s\n"   "$CONFIG_DIR"
+        printf "data_dir=%s\n"     "$DATA_DIR"
+        printf "cache_dir=%s\n"    "$CACHE_DIR"
+        printf "profiles_dir=%s\n" "$PROFILES_DIR"
+        printf "active_file=%s\n"  "$ACTIVE_FILE"
+        exit 0
+      fi
+      case "$key" in
+        config_dir)   echo "$CONFIG_DIR" ;;
+        data_dir)     echo "$DATA_DIR" ;;
+        cache_dir)    echo "$CACHE_DIR" ;;
+        profiles_dir) echo "$PROFILES_DIR" ;;
+        active_file)  echo "$ACTIVE_FILE" ;;
+        compose_env)
+          name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+          echo "$(profile_compose_env_path "$name")"
+          ;;
+        runtime_env)
+          name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+          echo "$(profile_runtime_env_path "$name")"
+          ;;
+        *) die "unknown paths key: $key" ;;
+      esac
+      ;;
+    active)
+      local a; a="$(get_active_profile)"
+      [[ -n "$a" ]] && echo "$a" || die "no active profile (use: $PROG use <name>)"
+      ;;
+    init)
+      local name="${1:-default}"
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      ensure_profile_prefilled "$name"
+      set_active_profile "$name"
+      echo "Active: $name"
+      echo "Opening runtime env: $(profile_runtime_env_path "$name")"
+      run_editor "$(profile_runtime_env_path "$name")"
+      ;;
+    create)
+      local name="${1:-}"; [[ -n "$name" ]] || die "usage: $PROG create <name>"
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      ensure_profile_prefilled "$name"
+      echo "Created: $name"
+      ;;
+    use|switch)
+      local name="${1:-}"; [[ -n "$name" ]] || die "usage: $PROG use <name>"
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      if ! profile_exists "$name"; then
+        die "profile not found: $name (use: $PROG create $name)"
+      fi
+      ensure_profile_prefilled "$name"
+
+      local current; current="$(get_active_profile)"
+      if [[ -n "$current" && "$current" == "$name" ]]; then
+        echo "Active: $name (unchanged)"
+        exit 0
+      fi
+
+      if [[ -n "$current" ]]; then
+        compose_down_best_effort "$current"
+      fi
+
+      set_active_profile "$name"
+      echo "Active: $name"
+      ;;
+    edit)
+      local name="${1:-}"
+      if [[ -z "$name" ]]; then
+        name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG edit <name> or $PROG use <name>"
+      fi
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      ensure_profile_prefilled "$name"
+      run_editor "$(profile_runtime_env_path "$name")"
+      ;;
+    edit-compose)
+      local name="${1:-}"
+      if [[ -z "$name" ]]; then
+        name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG edit-compose <name>"
+      fi
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      ensure_profile_prefilled "$name"
+      run_editor "$(profile_compose_env_path "$name")"
+      ;;
+    up|start|run)
+      local requested="${1:-}"
+      local current; current="$(get_active_profile)"
+      local name
+
+      if [[ -n "$requested" ]]; then
+        name="$(sanitize_profile_name "$requested")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+        ensure_profile_prefilled "$name"
+        if [[ -n "$current" && "$current" != "$name" ]]; then
+          compose_down_best_effort "$current"
+        fi
+        set_active_profile "$name"
+      else
+        name="$current"
+        [[ -n "$name" ]] || die "no active profile; use: $PROG use <name>"
+      fi
+
+      compose_up "$name"
+      ;;
+    debug)
+      local requested="${1:-}"
+      local current; current="$(get_active_profile)"
+      local name
+
+      if [[ -n "$requested" ]]; then
+        name="$(sanitize_profile_name "$requested")" || die "invalid profile name (use letters/digits/._-)"
+        ensure_profile_prefilled "$name"
+        if [[ -n "$current" && "$current" != "$name" ]]; then
+          compose_down_best_effort "$current"
+        fi
+        set_active_profile "$name"
+      else
+        name="$current"
+        [[ -n "$name" ]] || die "no active profile; use: $PROG use <name>"
+      fi
+
+      compose_debug "$name"
+      ;;
+    down|stop)
+      local name="${1:-}"
+      if [[ -z "$name" ]]; then
+        name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG down <name>"
+      else
+        name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      fi
+      compose_cmd "$name" down --remove-orphans
+      ;;
+    status)
+      local name="${1:-}"
+      if [[ -z "$name" ]]; then
+        name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG status <name>"
+      else
+        name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      fi
+      compose_status "$name"
+      ;;
+    logs)
+      local name="${1:-}"
+      shift || true
+      local services=("$@")
+
+      if [[ -z "$name" ]]; then
+        name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG logs <name>"
+      else
+        local candidate; candidate="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+        if profile_exists "$candidate"; then
+          name="$candidate"
+        else
+          local active; active="$(get_active_profile)"
+          if [[ -n "$active" ]]; then
+            services=("$candidate" "${services[@]}")
+            name="$active"
+          else
+            die "no active profile; use: $PROG logs <profile> [service...]"
+          fi
+        fi
+      fi
+
+      compose_logs "$name" "${services[@]}"
+      ;;
+    delete|rm|remove)
+      local name="${1:-}"; [[ -n "$name" ]] || die "usage: $PROG delete <name> [--yes]"
+      shift || true
+      local assume_yes="0"
+      [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]] && assume_yes="1"
+
+      name="$(sanitize_profile_name "$name")" || die "invalid profile name (use letters/digits/._-; must not end with .llm)"
+      if [[ "$name" == "default" ]]; then
+        die "cannot delete profile 'default' (protected). Create another profile and switch to it if you want a different active profile."
+      fi
+      local compose_file runtime_file
+      compose_file="$(profile_compose_env_path "$name")"
+      runtime_file="$(profile_runtime_env_path "$name")"
+      [[ -f "$compose_file" || -f "$runtime_file" ]] || die "profile not found: $name"
+
+      if ! confirm "Delete profile '$name' and its profile-owned data (logs/cache/dumps)?" "$assume_yes"; then
+        echo "Cancelled."; exit 0
+      fi
+
+      local active; active="$(get_active_profile)"
+      compose_down_best_effort "$name"
+      if [[ "$active" == "$name" ]]; then
+        clear_active_profile
+      fi
+
+      rm -f "$compose_file" "$runtime_file" "$(compose_override_path "$name")"
+      rm -rf "${PROFILE_CACHE_ROOT:?}/${name}" "${PROFILE_LOG_ROOT:?}/${name}" "${PROFILE_DATA_ROOT:?}/${name}"
+      echo "Deleted: $name"
+
+      if [[ "$active" == "$name" ]]; then
+        local fallback
+        fallback="$(pick_fallback_profile "$name")"
+        if [[ -n "$fallback" ]]; then
+          set_active_profile "$fallback"
+          echo "Active: $fallback"
+        else
+          echo "Active profile cleared (no profiles left)."
+        fi
+      fi
+      ;;
+    install) cmd_install ;;
+    uninstall) cmd_uninstall ;;
+    reinstall) cmd_reinstall ;;
+    completion)
+      local shell="${1:-}"; [[ -n "$shell" ]] || die "usage: $PROG completion <bash|zsh|fish>"
+      print_completion "$shell"
+      ;;
+    *)
+      usage
+      die "unknown command: $cmd"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,9 @@
+-r requirements.in
+
+pytest
+pytest-asyncio
+httpx  # для тестов (если мокаете запросы)
+ruff
+pyright
+pip-tools
+debugpy
