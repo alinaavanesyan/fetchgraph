@@ -1,0 +1,51 @@
+name: pytest
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [[ -f requirements-dev.txt ]]; then
+            pip install -r requirements-dev.txt
+          elif [[ -f requirements.txt ]]; then
+            pip install -r requirements.txt
+          fi
+
+          # If project is installable, install it (preferred for imports)
+          if [[ -f pyproject.toml || -f setup.cfg || -f setup.py ]]; then
+            pip install -e .
+          fi
+
+          # Fallback: add src/ to PYTHONPATH if present
+          if [[ -d src ]]; then
+            echo "PYTHONPATH=${GITHUB_WORKSPACE}/src" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run pytest
+        run: pytest -q

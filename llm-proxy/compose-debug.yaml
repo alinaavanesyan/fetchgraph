@@ -1,0 +1,23 @@
+services:
+  llm:
+    image: ${LLM_DEBUG_IMAGE}
+
+    build:
+      context: ${LLM_BUILD_CONTEXT:-.}
+      dockerfile: Dockerfile.debug
+      args:
+        BASE_IMAGE: ${LLM_BASE_IMAGE}
+
+    ports:
+      - "5678:5678"
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+      WATCHFILES_FORCE_POLLING: "true"
+
+    command:
+      - sh
+      - -lc
+      - |
+          exec python -m debugpy --listen 0.0.0.0:5678 --wait-for-client \
+            -m uvicorn llm.main:app --host 0.0.0.0 --port "${LLM_PORT:-8002}" --reload

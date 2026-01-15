@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "LLM Proxy (Docker) — attach debugpy",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/llm/src",
+          "remoteRoot": "/home/appuser/app"
+        },
+      ],
+      "justMyCode": true
+    }
+  ]
+}
