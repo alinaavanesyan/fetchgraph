@@ -1,0 +1,65 @@
+[
+  {
+    "required_context": ["docs", "code"],
+    "adr_queries": ["почему выбран postgres?"],
+    "constraints": ["не менять схему"],
+    "entities": [],
+    "dtos": [],
+    "context_plan": [
+      {
+        "provider": "docs",
+        "mode": "full",
+        "selectors": {
+          "topic": "архитектура"
+        }
+      }
+    ]
+  },
+  {
+    "required_context": ["qa", "Docs"],
+    "adr_queries": [],
+    "constraints": [],
+    "entities": [
+      {
+        "name": "Feature",
+        "change": "NEW",
+        "fields": [
+          {
+            "name": "title",
+            "change": "NEW"
+          }
+        ],
+        "relations": []
+      }
+    ],
+    "dtos": [
+      {
+        "name": "FeatureDTO",
+        "change": "update"
+      }
+    ],
+    "context_plan": []
+  },
+  {
+    "required_context": [],
+    "adr_queries": ["какие лимиты есть?"],
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "context_plan": [
+      {
+        "provider": "code",
+        "mode": "slice",
+        "selectors": {
+          "path": "src/",
+          "query": "PlanParser"
+        }
+      },
+      {
+        "provider": "unknown-provider",
+        "mode": "full",
+        "selectors": {}
+      }
+    ]
+  }
+]
