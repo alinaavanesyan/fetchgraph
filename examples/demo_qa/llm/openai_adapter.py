@@ -18,6 +18,7 @@ class OpenAILLM(LLMInvoke):
         *,
         api_key: str | None,
         base_url: str | None = None,
+        headers: Dict[str, str] | None = None,
         plan_model: str,
         synth_model: str,
         plan_temperature: float = 0.0,
@@ -34,7 +35,15 @@ class OpenAILLM(LLMInvoke):
         validated_base = self._validate_base_url(base_url)
         normalized_base = validated_base.rstrip("/") if validated_base else None
 
-        self.client = openai.OpenAI(api_key=resolved_key, base_url=normalized_base)
+        default_headers = headers or {}
+        if default_headers:
+            self.client = openai.OpenAI(
+                api_key=resolved_key,
+                base_url=normalized_base,
+                default_headers=default_headers,
+            )
+        else:
+            self.client = openai.OpenAI(api_key=resolved_key, base_url=normalized_base)
         self.plan_model = plan_model
         self.synth_model = synth_model
         self.plan_temperature = plan_temperature
