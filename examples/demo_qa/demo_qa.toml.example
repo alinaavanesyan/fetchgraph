@@ -1,6 +1,5 @@
 [llm]
 base_url = "http://localhost:8000/v1"
-headers.x-api-key = "replace-with-proxy-key"
 plan_model = "default"
 synth_model = "default"
 plan_temperature = 0.0

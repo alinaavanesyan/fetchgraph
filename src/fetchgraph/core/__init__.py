@@ -17,7 +17,6 @@ from .models import (
     RefetchDecision,
     TaskProfile,
 )
-from ..planning.normalize import NormalizedPlan, PlanNormalizer, PlanNormalizerOptions
 from .protocols import (
     ContextProvider,
     LLMInvoke,
@@ -42,9 +41,6 @@ __all__ = [
     "ContextItem",
     "RefetchDecision",
     "Plan",
-    "NormalizedPlan",
-    "PlanNormalizer",
-    "PlanNormalizerOptions",
     "ContextProvider",
     "SupportsFilter",
     "SupportsDescribe",
