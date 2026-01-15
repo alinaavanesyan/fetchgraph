@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+
+# Единственный источник правды: BASE_IMAGE передаём из compose (он берётся из LLM_IMAGE)
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# В базовом образе у тебя, как правило, USER не root.
+# Ставим debugpy под root и возвращаем пользователя обратно.
+USER root
+RUN python -m pip install --no-cache-dir "debugpy>=1.8,<2"
+
+# ВАЖНО: имя пользователя должно совпасть с тем, что в базовом Dockerfile.
+# Если у тебя там USER appuser — оставь так.
+USER appuser

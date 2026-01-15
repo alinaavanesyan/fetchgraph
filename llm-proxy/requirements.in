@@ -1,0 +1,26 @@
+# Web/API
+fastapi==0.115.12
+uvicorn[standard]>=0.27,<0.32
+
+# Config / models
+pydantic==2.11.4
+pydantic-settings==2.9.1
+
+# HTTP клиент (если используешь в провайдере/клиенте)
+httpx==0.28.1
+
+# LLM stack (оставляй, если реально используешь LangChain/OpenAI)
+openai>=1.30,<2.0
+langchain==0.3.25
+langchain-core==0.3.61
+langchain-openai>=0.3,<0.4
+langgraph
+
+# Cache / DB
+aiosqlite>=0.20,<0.21
+
+# Metrics
+prometheus-client==0.21.1
+
+# (опционально) если реально используешь yaml-конфиги
+PyYAML==6.0.2

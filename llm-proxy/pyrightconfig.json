@@ -1,0 +1,9 @@
+{
+  "include": ["."],
+  "exclude": [".venv", ".venvs", "dist", "build"],
+  "pythonVersion": "3.12",
+  "venvPath": ".venv",
+  "executionEnvironments": [
+    { "root": ".", "extraPaths": ["./src"] }
+  ]
+}
