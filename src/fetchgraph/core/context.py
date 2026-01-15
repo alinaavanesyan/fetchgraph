@@ -321,6 +321,8 @@ def create_generic_agent(
 # BaseGraphAgent (sequential engine; no external graph dep)
 # -----------------------------------------------------------------------------
 class BaseGraphAgent:
+    _plan_trace_counter = 0
+
     def __init__(
         self,
         llm_plan: Optional[Callable[[str, Dict[str, str]], str]],
@@ -363,6 +365,7 @@ class BaseGraphAgent:
             if plan_dump_dir is not None
             else Path.cwd() / ".fetchgraph_plans"
         )
+        self._last_plan_trace_path: Optional[Path] = None
 
         logger.info(
             "BaseGraphAgent initialized "
@@ -457,10 +460,15 @@ class BaseGraphAgent:
             plan = self.plan_parser(plan_raw)
         else:
             plan = Plan.model_validate_json(plan_raw.text)
-        self._write_plan_snapshot(plan, feature_name, "before_normalize")
+        self._last_plan_trace_path = self._build_plan_trace_path(feature_name)
+        self._append_plan_trace(
+            {"stage": "before_normalize", "plan": json.loads(plan.model_dump_json())}
+        )
         if self.plan_normalizer is not None:
             plan = self.plan_normalizer.normalize(plan)
-        self._write_plan_snapshot(plan, feature_name, "after_normalize")
+        self._append_plan_trace(
+            {"stage": "after_normalize", "plan": json.loads(plan.model_dump_json())}
+        )
         elapsed = time.perf_counter() - t0
         logger.info(
             "Planning finished for feature_name=%r in %.3fs "
@@ -484,18 +492,27 @@ class BaseGraphAgent:
         )
         return plan
 
-    def _write_plan_snapshot(self, plan: Plan, feature_name: str, stage: str) -> None:
+    def _build_plan_trace_path(self, feature_name: str) -> Path:
+        self.plan_dump_dir.mkdir(parents=True, exist_ok=True)
+        BaseGraphAgent._plan_trace_counter += 1
+        counter = BaseGraphAgent._plan_trace_counter
+        safe_feature = re.sub(r"[^a-zA-Z0-9._-]+", "_", feature_name).strip("_")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        filename = (
+            f"{counter:04d}_{timestamp}_{safe_feature or 'feature'}_plan_trace.txt"
+        )
+        return self.plan_dump_dir / filename
+
+    def _append_plan_trace(self, payload: Dict[str, Any]) -> None:
+        if self._last_plan_trace_path is None:
+            return
         try:
-            self.plan_dump_dir.mkdir(parents=True, exist_ok=True)
-            safe_feature = re.sub(r"[^a-zA-Z0-9._-]+", "_", feature_name).strip("_")
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{timestamp}_{safe_feature or 'feature'}_{stage}.txt"
-            path = self.plan_dump_dir / filename
-            path.write_text(
-                plan.model_dump_json(indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+            with self._last_plan_trace_path.open("a", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.write("\n\n")
         except Exception:
-            logger.exception("Failed to write plan snapshot (stage=%s)", stage)
+            logger.exception("Failed to append plan trace payload")
 
     def _merge_baseline_with_plan(self, plan: Plan) -> List[ContextFetchSpec]:
         by_provider: Dict[str, ContextFetchSpec] = {}
@@ -542,6 +559,16 @@ class BaseGraphAgent:
                 spec.mode,
                 spec.selectors,
                 getattr(spec, "max_tokens", None),
+            )
+            self._append_plan_trace(
+                {
+                    "stage": "fetch_request",
+                    "provider": spec.provider,
+                    "provider_class": prov.__class__.__name__,
+                    "mode": spec.mode,
+                    "selectors": spec.selectors,
+                    "max_tokens": spec.max_tokens,
+                }
             )
             obj = prov.fetch(feature_name, selectors=spec.selectors)
             if spec.mode == "slice":
