@@ -10,6 +10,7 @@ def build_llm(settings: DemoQASettings) -> LLMInvoke:
     return OpenAILLM(
         api_key=settings.llm.api_key,
         base_url=settings.llm.base_url,
+        headers=settings.llm.headers,
         plan_model=settings.llm.plan_model,
         synth_model=settings.llm.synth_model,
         plan_temperature=settings.llm.plan_temperature,

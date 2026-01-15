@@ -22,6 +22,7 @@ def _install_fake_openai(monkeypatch, created: dict):
         def __init__(self, api_key=None, base_url=None, **kwargs):
             created["api_key"] = api_key
             created["base_url"] = base_url
+            created["init_kwargs"] = kwargs
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: _store_and_return(kwargs)))
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
@@ -116,6 +117,32 @@ plan_model = "demo-plan"
         "model": "demo-plan",
         "messages": [{"role": "user", "content": "hello"}],
         "temperature": 0.0,
+    }
+
+
+def test_headers_passed_to_openai_client(tmp_path, monkeypatch):
+    config_path = tmp_path / "demo_qa.toml"
+    write_toml(
+        config_path,
+        """
+[llm]
+api_key = "sk-test"
+plan_model = "demo-plan"
+headers.x-api-key = "gsk-test"
+headers.x-org = "acme"
+""",
+    )
+    created = {}
+    _install_fake_openai(monkeypatch, created)
+
+    settings, resolved = load_settings(config_path=config_path)
+    assert resolved == config_path
+    llm = build_llm(settings)
+
+    llm("hello", sender="generic_plan")
+    assert created["init_kwargs"]["default_headers"] == {
+        "x-api-key": "gsk-test",
+        "x-org": "acme",
     }
 
 

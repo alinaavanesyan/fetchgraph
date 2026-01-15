@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
+from pathlib import Path
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from ..parsing.plan_parser import PlanParser
+from ..planning.normalize import PlanNormalizer
 from .models import (
     BaselineSpec,
     ContextFetchSpec,
@@ -327,11 +331,13 @@ class BaseGraphAgent:
         verifiers: List[Verifier],
         packer: ContextPacker,
         plan_parser: Optional[Callable[[RawLLMOutput], Plan]] = None,
+        plan_normalizer: Optional[PlanNormalizer] = None,
         baseline: Optional[List[BaselineSpec]] = None,
         max_retries: int = 2,
         task_profile: Optional[TaskProfile] = None,
         llm_refetch: Optional[Callable[[str, Dict[str, str], Plan], str]] = None,
         max_refetch_iters: int = 1,
+        plan_dump_dir: Optional[str | Path] = None,
     ):
         self.llm_plan = llm_plan
         self.llm_synth = llm_synth
@@ -344,22 +350,34 @@ class BaseGraphAgent:
             self.plan_parser = PlanParser().parse
         else:
             self.plan_parser = plan_parser
+        self.plan_normalizer = plan_normalizer or PlanNormalizer.from_providers(
+            providers
+        )
         self.baseline = baseline or []
         self.max_retries = max_retries
         self.task_profile = task_profile or TaskProfile()
         self.llm_refetch = llm_refetch
         self.max_refetch_iters = max_refetch_iters
+        self.plan_dump_dir = (
+            Path(plan_dump_dir)
+            if plan_dump_dir is not None
+            else Path.cwd() / ".fetchgraph_plans"
+        )
+        self._last_plan_trace_path: Optional[Path] = None
 
         logger.info(
             "BaseGraphAgent initialized "
             "(task_name=%r, providers=%d, verifiers=%d, "
-            "baseline_specs=%d, max_retries=%d, max_refetch_iters=%d)",
+            "baseline_specs=%d, max_retries=%d, max_refetch_iters=%d, "
+            "plan_normalizer=%s, plan_dump_dir=%s)",
             self.task_profile.task_name,
             len(self.providers),
             len(self.verifiers),
             len(self.baseline),
             self.max_retries,
             self.max_refetch_iters,
+            self.plan_normalizer.__class__.__name__ if self.plan_normalizer else None,
+            self.plan_dump_dir,
         )
 
     # ---- public API ----
@@ -440,6 +458,15 @@ class BaseGraphAgent:
             plan = self.plan_parser(plan_raw)
         else:
             plan = Plan.model_validate_json(plan_raw.text)
+        self._last_plan_trace_path = self._build_plan_trace_path(feature_name)
+        self._append_plan_trace(
+            {"stage": "before_normalize", "plan": json.loads(plan.model_dump_json())}
+        )
+        if self.plan_normalizer is not None:
+            plan = self.plan_normalizer.normalize(plan)
+        self._append_plan_trace(
+            {"stage": "after_normalize", "plan": json.loads(plan.model_dump_json())}
+        )
         elapsed = time.perf_counter() - t0
         logger.info(
             "Planning finished for feature_name=%r in %.3fs "
@@ -462,6 +489,24 @@ class BaseGraphAgent:
             len(plan_raw.text),
         )
         return plan
+
+    def _build_plan_trace_path(self, feature_name: str) -> Path:
+        self.plan_dump_dir.mkdir(parents=True, exist_ok=True)
+        safe_feature = re.sub(r"[^a-zA-Z0-9._-]+", "_", feature_name).strip("_")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"{timestamp}_{safe_feature or 'feature'}_plan_trace.txt"
+        return self.plan_dump_dir / filename
+
+    def _append_plan_trace(self, payload: Dict[str, Any]) -> None:
+        if self._last_plan_trace_path is None:
+            return
+        try:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+            with self._last_plan_trace_path.open("a", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.write("\n\n")
+        except Exception:
+            logger.exception("Failed to append plan trace payload")
 
     def _merge_baseline_with_plan(self, plan: Plan) -> List[ContextFetchSpec]:
         by_provider: Dict[str, ContextFetchSpec] = {}
@@ -508,6 +553,16 @@ class BaseGraphAgent:
                 spec.mode,
                 spec.selectors,
                 getattr(spec, "max_tokens", None),
+            )
+            self._append_plan_trace(
+                {
+                    "stage": "fetch_request",
+                    "provider": spec.provider,
+                    "provider_class": prov.__class__.__name__,
+                    "mode": spec.mode,
+                    "selectors": spec.selectors,
+                    "max_tokens": spec.max_tokens,
+                }
             )
             obj = prov.fetch(feature_name, selectors=spec.selectors)
             if spec.mode == "slice":
