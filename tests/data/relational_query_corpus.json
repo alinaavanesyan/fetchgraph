@@ -1,0 +1,59 @@
+[
+  {
+    "input": {
+      "op": "query",
+      "root_entity": "Customers",
+      "select": [{"expr": "*"}],
+      "filters": {
+        "type": "comparison",
+        "field": "customer_id",
+        "op": "==",
+        "value": "323"
+      },
+      "limit": "5",
+      "offset": "-2"
+    },
+    "expected": {
+      "root_entity": "customers",
+      "select": [
+        {"expr": "customers.customer_id"},
+        {"expr": "customers.name"},
+        {"expr": "customers.city"}
+      ],
+      "filters": {
+        "type": "comparison",
+        "entity": "customers",
+        "field": "customer_id",
+        "op": "=",
+        "value": "323"
+      },
+      "limit": 5,
+      "offset": 0
+    }
+  },
+  {
+    "input": {
+      "op": "query",
+      "root_entity": "orders",
+      "select": [{"expr": "Order_ID", "alias": "order_id"}],
+      "filters": {
+        "type": "comparison",
+        "entity": "Orders",
+        "field": "Order_ID",
+        "op": "lte",
+        "value": "'10'"
+      }
+    },
+    "expected": {
+      "root_entity": "orders",
+      "select": [{"expr": "orders.order_id"}],
+      "filters": {
+        "type": "comparison",
+        "entity": "orders",
+        "field": "order_id",
+        "op": "<=",
+        "value": "10"
+      }
+    }
+  }
+]

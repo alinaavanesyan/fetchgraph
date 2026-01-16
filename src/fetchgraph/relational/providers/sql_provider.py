@@ -508,6 +508,14 @@ class SqlRelationalDataProvider(RelationalDataProvider):
             sql_parts.append(offset_clause)
 
         sql = " ".join(part for part in sql_parts if part)
+        self._append_trace(
+            {
+                "stage": "sql_query",
+                "sql": sql,
+                "params": params,
+                "root_entity": req.root_entity,
+            }
+        )
         cursor = self.connection.cursor()
         cursor.execute(sql, params)
         columns = [desc[0] for desc in cursor.description]
@@ -567,6 +575,14 @@ class SqlRelationalDataProvider(RelationalDataProvider):
             sql_parts.append(offset_clause)
 
         sql = " ".join(part for part in sql_parts if part)
+        self._append_trace(
+            {
+                "stage": "sql_query",
+                "sql": sql,
+                "params": params,
+                "root_entity": req.root_entity,
+            }
+        )
         cursor = self.connection.cursor()
         cursor.execute(sql, params)
 
@@ -618,4 +634,3 @@ class SqlRelationalDataProvider(RelationalDataProvider):
 
 
 __all__ = ["SqlRelationalDataProvider"]
-

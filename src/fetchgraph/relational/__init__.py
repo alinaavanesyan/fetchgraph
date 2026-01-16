@@ -25,6 +25,7 @@ from .models import (
     SemanticOnlyRequest,
     SemanticOnlyResult,
 )
+from .normalize import RelationalNormalizeOptions, normalize_relational_query
 from .providers import (
     CompositeRelationalProvider,
     PandasRelationalDataProvider,
@@ -67,6 +68,8 @@ __all__ = (
     "SemanticMatch",
     "SemanticOnlyRequest",
     "SemanticOnlyResult",
+    "RelationalNormalizeOptions",
+    "normalize_relational_query",
     "RelationalDataProvider",
     "SqlRelationalDataProvider",
     "CompositeRelationalProvider",
