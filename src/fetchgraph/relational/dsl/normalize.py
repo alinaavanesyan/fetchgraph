@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import Dict, Iterable, Mapping, Optional, Sequence
+
+from .ast import (
+    ColumnRef,
+    Comparison,
+    Expression,
+    Logical,
+    OrderBy,
+    SelectItem,
+    SelectQuery,
+    SelectStar,
+)
+
+ComparisonAliases = {
+    "=": "=",
+    "==": "=",
+    "eq": "=",
+    "equals": "=",
+    "!=": "!=",
+    "<>": "!=",
+    "ne": "!=",
+    "not_equals": "!=",
+    "<": "<",
+    "lt": "<",
+    "<=": "<=",
+    "lte": "<=",
+    ">": ">",
+    "gt": ">",
+    ">=": ">=",
+    "gte": ">=",
+}
+
+
+def normalize_query(
+    query: SelectQuery,
+    *,
+    table_columns: Optional[Mapping[str, Sequence[str]]] = None,
+) -> SelectQuery:
+    normalized = _normalize_query_structure(query)
+    normalized = _normalize_order_by(normalized)
+    normalized = _normalize_where(normalized)
+    return _normalize_select(normalized, table_columns=table_columns)
+
+
+def _normalize_query_structure(query: SelectQuery) -> SelectQuery:
+    normalized_table = _normalize_identifier(query.from_table)
+    return replace(
+        query,
+        from_table=normalized_table,
+        limit=_normalize_limit(query.limit),
+        offset=_normalize_offset(query.offset),
+    )
+
+
+def _normalize_select(
+    query: SelectQuery,
+    *,
+    table_columns: Optional[Mapping[str, Sequence[str]]],
+) -> SelectQuery:
+    normalized_select = [_normalize_select_item(item) for item in query.select]
+    expanded_select = _expand_select_star(
+        normalized_select,
+        table=query.from_table,
+        table_columns=table_columns,
+    )
+    return replace(query, select=expanded_select)
+
+
+def _normalize_select_item(item: SelectItem) -> SelectItem:
+    expr = item.expr
+    if isinstance(expr, ColumnRef):
+        expr = ColumnRef(table=_normalize_identifier(expr.table), name=_normalize_identifier(expr.name))
+    alias = _normalize_identifier(item.alias) if item.alias else None
+    return replace(item, expr=expr, alias=alias)
+
+
+def _expand_select_star(
+    items: Sequence[SelectItem],
+    *,
+    table: str,
+    table_columns: Optional[Mapping[str, Sequence[str]]],
+) -> list[SelectItem]:
+    if not items:
+        return list(items)
+    if not _contains_select_star(items):
+        return list(items)
+    if not table_columns:
+        return [item for item in items if not isinstance(item.expr, SelectStar)]
+    columns = _resolve_columns(table, table_columns)
+    expanded: list[SelectItem] = []
+    for item in items:
+        if isinstance(item.expr, SelectStar):
+            expanded.extend(
+                SelectItem(expr=ColumnRef(table=table, name=column), alias=None)
+                for column in columns
+            )
+        else:
+            expanded.append(item)
+    return expanded
+
+
+def _normalize_where(query: SelectQuery) -> SelectQuery:
+    if query.where is None:
+        return query
+    return replace(query, where=_normalize_expression(query.where))
+
+
+def _normalize_expression(expr: Expression) -> Expression:
+    if isinstance(expr, ColumnRef):
+        return ColumnRef(table=_normalize_identifier(expr.table), name=_normalize_identifier(expr.name))
+    if isinstance(expr, Comparison):
+        return Comparison(
+            left=_normalize_expression(expr.left),
+            op=_normalize_comparison(expr.op),
+            right=_normalize_expression(expr.right),
+        )
+    if isinstance(expr, Logical):
+        return Logical(op=expr.op.lower(), clauses=[_normalize_expression(c) for c in expr.clauses])
+    return expr
+
+
+def _normalize_order_by(query: SelectQuery) -> SelectQuery:
+    if not query.order_by:
+        return query
+    normalized = [
+        OrderBy(
+            column=ColumnRef(
+                table=_normalize_identifier(item.column.table),
+                name=_normalize_identifier(item.column.name),
+            ),
+            direction=item.direction.lower(),
+        )
+        for item in query.order_by
+    ]
+    return replace(query, order_by=normalized)
+
+
+def _normalize_comparison(op: str) -> str:
+    cleaned = op.strip().lower()
+    return ComparisonAliases.get(cleaned, cleaned)
+
+
+def _normalize_identifier(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    cleaned = value.strip()
+    if cleaned.startswith("`") and cleaned.endswith("`") and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+    if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+    return cleaned.lower()
+
+
+def _normalize_limit(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    return max(0, value)
+
+
+def _normalize_offset(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    return max(0, value)
+
+
+def _contains_select_star(items: Iterable[SelectItem]) -> bool:
+    return any(isinstance(item.expr, SelectStar) for item in items)
+
+
+def _resolve_columns(table: str, table_columns: Mapping[str, Sequence[str]]) -> list[str]:
+    columns = list(table_columns.get(table, []))
+    return [_normalize_identifier(col) for col in columns]
