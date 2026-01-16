@@ -1,4 +1,8 @@
-"""Relational DSL components (parsing, AST, compilation)."""
+"""Relational DSL components (parsing, AST, compilation).
+
+These utilities normalize SQL-like queries before compiling them into selectors;
+they are separate from the plan normalizer used in the planning pipeline.
+"""
 
 from .ast import (
     ColumnRef,

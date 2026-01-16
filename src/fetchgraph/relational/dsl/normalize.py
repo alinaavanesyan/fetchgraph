@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Normalization helpers for the relational DSL.
+
+This module is intentionally decoupled from plan normalization. It is meant to
+be used by the relational DSL parser/compiler pipeline to canonicalize LLM-
+produced SQL-like queries before they are converted into structured selectors.
+"""
+
 from dataclasses import replace
 from typing import Dict, Iterable, Mapping, Optional, Sequence
 
