@@ -20,6 +20,7 @@ except ImportError as exc:  # pragma: no cover - make missing dependency explici
 class LLMSettings(BaseModel):
     base_url: str | None = Field(default=None)
     api_key: str | None = Field(default=None)
+    headers: Dict[str, str] = Field(default_factory=dict)
     model: str | None = None
     plan_model: str = "default"
     synth_model: str = "default"

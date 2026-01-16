@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any, List, Optional
 
 from ...core.models import ProviderInfo
@@ -18,6 +19,7 @@ from ..models import (
     SemanticOnlyRequest,
     SemanticOnlyResult,
 )
+from ..normalize import RelationalNormalizeOptions, normalize_relational_query
 from ..types import SelectorsDict
 
 
@@ -36,6 +38,7 @@ class RelationalDataProvider(ContextProvider, SupportsDescribe):
         self.name = name
         self.entities = entities
         self.relations = relations
+        self._trace_path: Optional[Path] = None
 
     @staticmethod
     def _normalize_string(value: Any) -> str:
@@ -70,19 +73,51 @@ class RelationalDataProvider(ContextProvider, SupportsDescribe):
             non-JSON-serializable; passed through without interpretation.
         """
         selectors = selectors or {}
+        trace_path = kwargs.pop("trace_path", None)
+        self._trace_path = Path(trace_path) if trace_path else None
         op = selectors.get("op")
         if op is None:
             raise ValueError("Relational selectors must include 'op' field.")
 
         if op == "schema":
+            req = SchemaRequest.model_validate(selectors)
+            self._append_trace({"stage": "relational_request", "request": req.model_dump()})
             return self._handle_schema()
         if op == "semantic_only":
             req = SemanticOnlyRequest.model_validate(selectors)
+            self._append_trace({"stage": "relational_request", "request": req.model_dump()})
             return self._handle_semantic_only(req)
         if op == "query":
             req = RelationalQuery.model_validate(selectors)
+            if not req.group_by and not req.aggregations:
+                normalized = normalize_relational_query(
+                    req,
+                    entities=self.entities,
+                    relations=self.relations,
+                    options=RelationalNormalizeOptions(),
+                )
+                if normalized.model_dump() != req.model_dump():
+                    self._append_trace(
+                        {
+                            "stage": "relational_request_normalized",
+                            "request": normalized.model_dump(),
+                        }
+                    )
+                req = normalized
+            self._append_trace({"stage": "relational_request", "request": req.model_dump()})
             return self._handle_query(req)
         raise ValueError(f"Unsupported op: {op}")
+
+    def _append_trace(self, payload: dict) -> None:
+        if not self._trace_path:
+            return
+        try:
+            text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+            with self._trace_path.open("a", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.write("\n\n")
+        except Exception:
+            pass
 
     def serialize(self, obj: Any) -> str:
         """Return the LLM-facing textual form of provider outputs.
