@@ -1,0 +1,32 @@
+from fetchgraph.relational.normalize import normalize_relational_selectors
+
+
+def test_normalize_aggregations_infers_agg() -> None:
+    selectors = {
+        "op": "query",
+        "root_entity": "orders",
+        "aggregations": [{"field": "count(*)", "alias": "count"}],
+    }
+
+    normalized = normalize_relational_selectors(selectors)
+
+    assert normalized["aggregations"] == [{"field": "*", "agg": "count", "alias": "count"}]
+
+
+def test_normalize_filters_list_to_logical() -> None:
+    selectors = {
+        "op": "query",
+        "root_entity": "customers",
+        "filters": [
+            {"type": "comparison", "field": "customer_id", "op": "=", "value": "914"},
+        ],
+    }
+
+    normalized = normalize_relational_selectors(selectors)
+
+    assert normalized["filters"] == {
+        "type": "comparison",
+        "field": "customer_id",
+        "op": "=",
+        "value": "914",
+    }
