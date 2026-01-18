@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, Optional
+
+from .types import SelectorsDict
+
+_AGG_REGEX = re.compile(r"^(?P<agg>[a-zA-Z_][\w]*)\s*\(\s*(?P<field>[^)]+)\s*\)$")
+
+
+def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
+    if not isinstance(selectors, dict):
+        return selectors
+    normalized = dict(selectors)
+    if normalized.get("op") != "query":
+        return normalized
+    normalized["aggregations"] = _normalize_aggregations(normalized.get("aggregations"))
+    normalized["filters"] = _normalize_filters(normalized.get("filters"))
+    return normalized
+
+
+def _normalize_aggregations(value: Any) -> Any:
+    if not isinstance(value, list):
+        return value
+    normalized: list[Any] = []
+    for item in value:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+        entry = dict(item)
+        if not entry.get("agg"):
+            field = entry.get("field")
+            parsed = _parse_agg_field(field)
+            if parsed:
+                agg, field_name = parsed
+                entry.setdefault("agg", agg)
+                entry["field"] = field_name
+        normalized.append(entry)
+    return normalized
+
+
+def _parse_agg_field(value: Any) -> Optional[tuple[str, str]]:
+    if not isinstance(value, str):
+        return None
+    match = _AGG_REGEX.match(value.strip())
+    if not match:
+        return None
+    agg = match.group("agg").lower()
+    field = match.group("field").strip()
+    return agg, field
+
+
+def _normalize_filters(value: Any) -> Any:
+    if isinstance(value, list):
+        clauses = [clause for clause in value if clause is not None]
+        if not clauses:
+            return None
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"type": "logical", "op": "and", "clauses": clauses}
+    if isinstance(value, dict) and "clauses" in value and "type" not in value:
+        normalized = dict(value)
+        normalized.setdefault("type", "logical")
+        normalized.setdefault("op", "and")
+        return normalized
+    return value
