@@ -8,6 +8,7 @@ produced SQL-like queries before they are converted into structured selectors.
 """
 
 from dataclasses import replace
+import re
 from typing import Dict, Iterable, Mapping, Optional, Sequence
 
 from .ast import (
@@ -30,6 +31,9 @@ ComparisonAliases = {
     "<>": "!=",
     "ne": "!=",
     "not_equals": "!=",
+    "neq": "!=",
+    "not equal": "!=",
+    "not equal to": "!=",
     "<": "<",
     "lt": "<",
     "<=": "<=",
@@ -47,9 +51,10 @@ def normalize_query(
     table_columns: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> SelectQuery:
     normalized = _normalize_query_structure(query)
-    normalized = _normalize_order_by(normalized)
     normalized = _normalize_where(normalized)
-    return _normalize_select(normalized, table_columns=table_columns)
+    normalized = _normalize_select(normalized, table_columns=table_columns)
+    normalized = _normalize_order_by(normalized)
+    return _resolve_aliases(normalized)
 
 
 def _normalize_query_structure(query: SelectQuery) -> SelectQuery:
@@ -125,7 +130,15 @@ def _normalize_expression(expr: Expression) -> Expression:
             right=_normalize_expression(expr.right),
         )
     if isinstance(expr, Logical):
-        return Logical(op=expr.op.lower(), clauses=[_normalize_expression(c) for c in expr.clauses])
+        op = expr.op.lower()
+        clauses: list[Expression] = []
+        for clause in expr.clauses:
+            normalized_clause = _normalize_expression(clause)
+            if isinstance(normalized_clause, Logical) and normalized_clause.op == op:
+                clauses.extend(normalized_clause.clauses)
+            else:
+                clauses.append(normalized_clause)
+        return Logical(op=op, clauses=clauses)
     return expr
 
 
@@ -138,7 +151,7 @@ def _normalize_order_by(query: SelectQuery) -> SelectQuery:
                 table=_normalize_identifier(item.column.table),
                 name=_normalize_identifier(item.column.name),
             ),
-            direction=item.direction.lower(),
+            direction=_normalize_order_direction(item.direction),
         )
         for item in query.order_by
     ]
@@ -156,9 +169,22 @@ def _normalize_identifier(value: Optional[str]) -> str:
     cleaned = value.strip()
     if cleaned.startswith("`") and cleaned.endswith("`") and len(cleaned) > 1:
         cleaned = cleaned[1:-1]
-    if cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
+    elif cleaned.startswith('"') and cleaned.endswith('"') and len(cleaned) > 1:
         cleaned = cleaned[1:-1]
+    elif cleaned.startswith("[") and cleaned.endswith("]") and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+    elif cleaned.startswith("'") and cleaned.endswith("'") and len(cleaned) > 1:
+        cleaned = cleaned[1:-1]
+    cleaned = re.sub(r"\s+", "_", cleaned)
+    cleaned = re.sub(r"[^\w]", "", cleaned)
     return cleaned.lower()
+
+
+def _normalize_order_direction(direction: str) -> str:
+    cleaned = direction.strip().lower()
+    if cleaned not in {"asc", "desc"}:
+        return "asc"
+    return cleaned
 
 
 def _normalize_limit(value: Optional[int]) -> Optional[int]:
@@ -180,3 +206,40 @@ def _contains_select_star(items: Iterable[SelectItem]) -> bool:
 def _resolve_columns(table: str, table_columns: Mapping[str, Sequence[str]]) -> list[str]:
     columns = list(table_columns.get(table, []))
     return [_normalize_identifier(col) for col in columns]
+
+
+def _resolve_aliases(query: SelectQuery) -> SelectQuery:
+    alias_map: Dict[str, ColumnRef] = {}
+    for item in query.select:
+        if item.alias and isinstance(item.expr, ColumnRef):
+            alias_map[item.alias] = item.expr
+    if not alias_map:
+        return query
+    normalized_where = _replace_aliases(query.where, alias_map) if query.where else None
+    normalized_order_by = [
+        _replace_order_by_alias(item, alias_map) for item in query.order_by
+    ]
+    return replace(query, where=normalized_where, order_by=normalized_order_by)
+
+
+def _replace_aliases(expr: Expression, alias_map: Mapping[str, ColumnRef]) -> Expression:
+    if isinstance(expr, ColumnRef):
+        if not expr.table and expr.name in alias_map:
+            return alias_map[expr.name]
+        return expr
+    if isinstance(expr, Comparison):
+        return Comparison(
+            left=_replace_aliases(expr.left, alias_map),
+            op=expr.op,
+            right=_replace_aliases(expr.right, alias_map),
+        )
+    if isinstance(expr, Logical):
+        return Logical(op=expr.op, clauses=[_replace_aliases(c, alias_map) for c in expr.clauses])
+    return expr
+
+
+def _replace_order_by_alias(item: OrderBy, alias_map: Mapping[str, ColumnRef]) -> OrderBy:
+    column = item.column
+    if not column.table and column.name in alias_map:
+        column = alias_map[column.name]
+    return OrderBy(column=column, direction=item.direction)

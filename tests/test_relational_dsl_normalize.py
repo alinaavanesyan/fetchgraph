@@ -73,3 +73,45 @@ def test_normalize_filters_and_order_by() -> None:
     ]
     assert normalized.limit == 0
     assert normalized.offset == 0
+
+
+def test_normalize_aliases_in_where_and_order_by() -> None:
+    query = SelectQuery(
+        select=[SelectItem(expr=ColumnRef(table="Users", name="Email"), alias="UserEmail")],
+        from_table="Users",
+        where=Comparison(
+            left=ColumnRef(table="", name="UserEmail"),
+            op="=",
+            right=ColumnRef(table="Users", name="BackupEmail"),
+        ),
+        order_by=[OrderBy(column=ColumnRef(table="", name="UserEmail"), direction="ASC")],
+    )
+
+    normalized = normalize_query(query)
+
+    assert normalized.where == Comparison(
+        left=ColumnRef(table="users", name="email"),
+        op="=",
+        right=ColumnRef(table="users", name="backupemail"),
+    )
+    assert normalized.order_by == [
+        OrderBy(column=ColumnRef(table="users", name="email"), direction="asc")
+    ]
+
+
+def test_normalize_identifiers_and_order_direction() -> None:
+    query = SelectQuery(
+        select=[SelectItem(expr=ColumnRef(table="[User Data]", name="`First Name`"))],
+        from_table='"User Data"',
+        order_by=[OrderBy(column=ColumnRef(table="Users", name="Email"), direction="Descending")],
+    )
+
+    normalized = normalize_query(query)
+
+    assert normalized.from_table == "user_data"
+    assert normalized.select == [
+        SelectItem(expr=ColumnRef(table="user_data", name="first_name"), alias=None)
+    ]
+    assert normalized.order_by == [
+        OrderBy(column=ColumnRef(table="users", name="email"), direction="asc")
+    ]
