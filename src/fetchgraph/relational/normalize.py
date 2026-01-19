@@ -15,17 +15,29 @@ def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
     if normalized.get("op") != "query":
         return normalized
     normalized["aggregations"] = _normalize_aggregations(normalized.get("aggregations"))
-    normalized["filters"] = _normalize_filters(normalized.get("filters"))
+    normalized["group_by"] = _normalize_group_by(normalized.get("group_by"))
+    normalized_filters = _normalize_filters(normalized.get("filters"))
+    normalized["filters"] = normalized_filters
+    normalized = _normalize_min_max_filter(normalized, normalized_filters)
     return normalized
 
 
 def _normalize_aggregations(value: Any) -> Any:
+    if value is None:
+        return None
     if not isinstance(value, list):
-        return value
+        value = [value]
     normalized: list[Any] = []
     for item in value:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            parsed = _parse_agg_field(item)
+            if parsed:
+                agg, field_name = parsed
+                normalized.append({"field": field_name, "agg": agg, "alias": None})
+            continue
         if not isinstance(item, dict):
-            normalized.append(item)
             continue
         entry = dict(item)
         if not entry.get("agg"):
@@ -35,8 +47,9 @@ def _normalize_aggregations(value: Any) -> Any:
                 agg, field_name = parsed
                 entry.setdefault("agg", agg)
                 entry["field"] = field_name
-        normalized.append(entry)
-    return normalized
+        if entry.get("field") and entry.get("agg"):
+            normalized.append(entry)
+    return normalized or None
 
 
 def _parse_agg_field(value: Any) -> Optional[tuple[str, str]]:
@@ -52,7 +65,7 @@ def _parse_agg_field(value: Any) -> Optional[tuple[str, str]]:
 
 def _normalize_filters(value: Any) -> Any:
     if isinstance(value, list):
-        clauses = [clause for clause in value if clause is not None]
+        clauses = _flatten_filter_clauses(value)
         if not clauses:
             return None
         if len(clauses) == 1:
@@ -62,5 +75,78 @@ def _normalize_filters(value: Any) -> Any:
         normalized = dict(value)
         normalized.setdefault("type", "logical")
         normalized.setdefault("op", "and")
-        return normalized
+        return _normalize_logical_filter(normalized)
+    if isinstance(value, dict) and value.get("type") == "logical":
+        return _normalize_logical_filter(value)
     return value
+
+
+def _normalize_min_max_filter(selectors: SelectorsDict, filters: Any) -> SelectorsDict:
+    if not isinstance(filters, dict):
+        return selectors
+    if filters.get("type") != "comparison":
+        return selectors
+    op = filters.get("op")
+    if not isinstance(op, str):
+        return selectors
+    op_lower = op.lower()
+    if op_lower not in {"min", "max"}:
+        return selectors
+    if "value" in filters and filters.get("value") is not None:
+        return selectors
+    field = filters.get("field")
+    if not isinstance(field, str) or not field.strip():
+        return selectors
+    aggregations = _normalize_aggregations(selectors.get("aggregations")) or []
+    aggregations.append({"field": field, "agg": op_lower, "alias": f"{op_lower}_{field}"})
+    normalized = dict(selectors)
+    normalized["aggregations"] = _normalize_aggregations(aggregations)
+    normalized["filters"] = None
+    return normalized
+
+
+def _normalize_group_by(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        value = [value]
+    normalized: list[Any] = []
+    for item in value:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            field = item.strip()
+            if not field:
+                continue
+            normalized.append({"entity": None, "field": field, "alias": None})
+            continue
+        if not isinstance(item, dict):
+            continue
+        field = item.get("field")
+        if not isinstance(field, str) or not field.strip():
+            continue
+        normalized.append(item)
+    return normalized or None
+
+
+def _flatten_filter_clauses(value: list[Any]) -> list[Any]:
+    flattened: list[Any] = []
+    for clause in value:
+        if clause is None:
+            continue
+        if isinstance(clause, list):
+            flattened.extend(_flatten_filter_clauses(clause))
+        else:
+            flattened.append(clause)
+    return flattened
+
+
+def _normalize_logical_filter(value: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(value)
+    op = normalized.get("op")
+    if isinstance(op, str):
+        normalized["op"] = op.lower()
+    clauses = normalized.get("clauses")
+    if isinstance(clauses, list):
+        normalized["clauses"] = _flatten_filter_clauses(clauses)
+    return normalized
