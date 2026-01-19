@@ -30,3 +30,22 @@ def test_normalize_filters_list_to_logical() -> None:
         "op": "=",
         "value": "914",
     }
+
+
+def test_normalize_min_filter_to_aggregation() -> None:
+    selectors = {
+        "op": "query",
+        "root_entity": "orders",
+        "filters": {
+            "type": "comparison",
+            "field": "order_total",
+            "op": "min",
+        },
+    }
+
+    normalized = normalize_relational_selectors(selectors)
+
+    assert normalized["filters"] is None
+    assert normalized["aggregations"] == [
+        {"field": "order_total", "agg": "min", "alias": "min_order_total"}
+    ]
