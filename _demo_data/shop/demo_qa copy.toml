@@ -1,0 +1,6 @@
+[llm]
+base_url = "http://localhost:8002/v1"
+plan_model = "qwen/qwen3-32b"
+synth_model = "qwen/qwen3-32b"
+plan_temperature = 0.6
+synth_temperature = 0.6

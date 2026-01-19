@@ -1,0 +1,151 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id",
+              "alias": "order_id"
+            },
+            {
+              "expr": "orders.date",
+              "alias": "date"
+            },
+            {
+              "expr": "orders.total",
+              "alias": "total"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "date",
+            "op": ">=",
+            "value": "2023-01-01"
+          },
+          "aggregations": [
+            {
+              "field": "total",
+              "agg": "sum",
+              "alias": "total_sum"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id",
+              "alias": "order_id"
+            },
+            {
+              "expr": "orders.date",
+              "alias": "date"
+            },
+            {
+              "expr": "orders.total",
+              "alias": "total"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "date",
+            "op": ">=",
+            "value": "2023-01-01"
+          },
+          "aggregations": [
+            {
+              "field": "total",
+              "agg": "sum",
+              "alias": "total_sum"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "orders.order_id",
+        "alias": "order_id"
+      },
+      {
+        "expr": "orders.date",
+        "alias": "date"
+      },
+      {
+        "expr": "orders.total",
+        "alias": "total"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "date",
+      "op": ">=",
+      "value": "2023-01-01"
+    },
+    "aggregations": [
+      {
+        "field": "total",
+        "agg": "sum",
+        "alias": "total_sum"
+      }
+    ],
+    "limit": null,
+    "offset": null,
+    "case_sensitivity": false
+  },
+  "max_tokens": 2000
+}
+

@@ -1,0 +1,145 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id"
+            },
+            {
+              "expr": "orders.order_date"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "order_date",
+            "op": "<",
+            "value": "2024-01-01"
+          },
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "order_date",
+              "alias": "month"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "count(*)",
+              "alias": "count"
+            }
+          ],
+          "limit": 1000
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id"
+            },
+            {
+              "expr": "orders.order_date"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "order_date",
+            "op": "<",
+            "value": "2024-01-01"
+          },
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "order_date",
+              "alias": "month"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "count(*)",
+              "alias": "count"
+            }
+          ],
+          "limit": 1000
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "orders.order_id"
+      },
+      {
+        "expr": "orders.order_date"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "order_date",
+      "op": "<",
+      "value": "2024-01-01"
+    },
+    "group_by": [
+      {
+        "entity": "orders",
+        "field": "order_date",
+        "alias": "month"
+      }
+    ],
+    "aggregations": [
+      {
+        "field": "count(*)",
+        "alias": "count"
+      }
+    ],
+    "limit": 1000
+  },
+  "max_tokens": 2000
+}
+

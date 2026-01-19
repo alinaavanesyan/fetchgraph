@@ -1,0 +1,1 @@
+2026-01-14 14:03:58 INFO examples.demo_qa.llm.openai_adapter [run=-] OpenAILLM using endpoint https://api.groq.com/openai/v1/chat/completions

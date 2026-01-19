@@ -1,0 +1,94 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "count(order_id)"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "channel",
+            "op": "=",
+            "value": "partner"
+          }
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "count(order_id)"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "channel",
+            "op": "=",
+            "value": "partner"
+          }
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "count(order_id)"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "channel",
+      "op": "=",
+      "value": "partner"
+    }
+  },
+  "max_tokens": 2000
+}
+

@@ -1,0 +1,109 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "select": [
+            {
+              "expr": "products.product_id",
+              "alias": "product_id"
+            },
+            {
+              "expr": "products.in_stock",
+              "alias": "in_stock"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "product_id",
+            "op": "=",
+            "value": "120"
+          }
+        },
+        "max_tokens": 1000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "select": [
+            {
+              "expr": "products.product_id",
+              "alias": "product_id"
+            },
+            {
+              "expr": "products.in_stock",
+              "alias": "in_stock"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "product_id",
+            "op": "=",
+            "value": "120"
+          }
+        },
+        "max_tokens": 1000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "products",
+    "select": [
+      {
+        "expr": "products.product_id",
+        "alias": "product_id"
+      },
+      {
+        "expr": "products.in_stock",
+        "alias": "in_stock"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "product_id",
+      "op": "=",
+      "value": "120"
+    }
+  },
+  "max_tokens": 1000
+}
+

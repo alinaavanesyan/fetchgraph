@@ -1,0 +1,124 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "filters": {
+            "type": "comparison",
+            "entity": "orders",
+            "field": "status",
+            "op": "=",
+            "value": "shipped"
+          },
+          "group_by": [
+            {
+              "entity": "customers",
+              "field": "city",
+              "alias": "city"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "customer_id",
+              "agg": "count",
+              "alias": "customer_count"
+            }
+          ]
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "filters": {
+            "type": "comparison",
+            "entity": "orders",
+            "field": "status",
+            "op": "=",
+            "value": "shipped"
+          },
+          "group_by": [
+            {
+              "entity": "customers",
+              "field": "city",
+              "alias": "city"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "customer_id",
+              "agg": "count",
+              "alias": "customer_count"
+            }
+          ]
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "filters": {
+      "type": "comparison",
+      "entity": "orders",
+      "field": "status",
+      "op": "=",
+      "value": "shipped"
+    },
+    "group_by": [
+      {
+        "entity": "customers",
+        "field": "city",
+        "alias": "city"
+      }
+    ],
+    "aggregations": [
+      {
+        "field": "customer_id",
+        "agg": "count",
+        "alias": "customer_count"
+      }
+    ]
+  },
+  "max_tokens": 2000
+}
+

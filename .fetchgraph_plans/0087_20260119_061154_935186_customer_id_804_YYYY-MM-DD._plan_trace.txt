@@ -1,0 +1,151 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id",
+              "alias": "order_id"
+            },
+            {
+              "expr": "orders.customer_id",
+              "alias": "customer_id"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "customer_id",
+            "op": "=",
+            "value": "804"
+          },
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "order_id",
+              "alias": "order_id"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "order_id",
+              "agg": "max",
+              "alias": "last_order_id"
+            }
+          ]
+        },
+        "max_tokens": null
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id",
+              "alias": "order_id"
+            },
+            {
+              "expr": "orders.customer_id",
+              "alias": "customer_id"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "customer_id",
+            "op": "=",
+            "value": "804"
+          },
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "order_id",
+              "alias": "order_id"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "order_id",
+              "agg": "max",
+              "alias": "last_order_id"
+            }
+          ]
+        },
+        "max_tokens": null
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "orders.order_id",
+        "alias": "order_id"
+      },
+      {
+        "expr": "orders.customer_id",
+        "alias": "customer_id"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "customer_id",
+      "op": "=",
+      "value": "804"
+    },
+    "group_by": [
+      {
+        "entity": "orders",
+        "field": "order_id",
+        "alias": "order_id"
+      }
+    ],
+    "aggregations": [
+      {
+        "field": "order_id",
+        "agg": "max",
+        "alias": "last_order_id"
+      }
+    ]
+  },
+  "max_tokens": null
+}
+

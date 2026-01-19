@@ -1,0 +1,106 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id"
+            },
+            {
+              "expr": "orders.order_total"
+            }
+          ],
+          "sort": [
+            {
+              "field": "orders.order_total",
+              "direction": "desc"
+            }
+          ],
+          "limit": 1
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "orders.order_id"
+            },
+            {
+              "expr": "orders.order_total"
+            }
+          ],
+          "sort": [
+            {
+              "field": "orders.order_total",
+              "direction": "desc"
+            }
+          ],
+          "limit": 1
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "orders.order_id"
+      },
+      {
+        "expr": "orders.order_total"
+      }
+    ],
+    "sort": [
+      {
+        "field": "orders.order_total",
+        "direction": "desc"
+      }
+    ],
+    "limit": 1
+  },
+  "max_tokens": 2000
+}
+

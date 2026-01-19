@@ -1,0 +1,2 @@
+_demo_data/shop/.runs/runs/20260114_141334_retail_cases/cases/items_002_b88246f8/error.txt
+_demo_data/shop/.runs/runs/20260114_141334_retail_cases/cases/items_003_bd4e0939/error.txt

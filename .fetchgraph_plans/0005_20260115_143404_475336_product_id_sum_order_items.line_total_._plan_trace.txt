@@ -1,0 +1,160 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "order_items",
+          "select": [
+            {
+              "expr": "order_items.product_id",
+              "alias": "product_id"
+            },
+            {
+              "expr": "sum(order_items.line_total)",
+              "alias": "total_revenue"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "product_id",
+            "op": "=",
+            "value": null
+          },
+          "group_by": [
+            {
+              "entity": "order_items",
+              "field": "product_id",
+              "alias": "product_id"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "total_revenue",
+              "agg": "sum",
+              "alias": "sum_order_items_line_total"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "order_items",
+          "select": [
+            {
+              "expr": "order_items.product_id",
+              "alias": "product_id"
+            },
+            {
+              "expr": "sum(order_items.line_total)",
+              "alias": "total_revenue"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "product_id",
+            "op": "=",
+            "value": null
+          },
+          "group_by": [
+            {
+              "entity": "order_items",
+              "field": "product_id",
+              "alias": "product_id"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "total_revenue",
+              "agg": "sum",
+              "alias": "sum_order_items_line_total"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "order_items",
+    "select": [
+      {
+        "expr": "order_items.product_id",
+        "alias": "product_id"
+      },
+      {
+        "expr": "sum(order_items.line_total)",
+        "alias": "total_revenue"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "product_id",
+      "op": "=",
+      "value": null
+    },
+    "group_by": [
+      {
+        "entity": "order_items",
+        "field": "product_id",
+        "alias": "product_id"
+      }
+    ],
+    "aggregations": [
+      {
+        "field": "total_revenue",
+        "agg": "sum",
+        "alias": "sum_order_items_line_total"
+      }
+    ],
+    "limit": null,
+    "offset": null,
+    "case_sensitivity": false
+  },
+  "max_tokens": 2000
+}
+

@@ -1,0 +1,151 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "select": [
+            {
+              "expr": "product_id"
+            },
+            {
+              "expr": "name"
+            },
+            {
+              "expr": "price"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "name",
+            "op": ">",
+            "value": "product with most sales"
+          },
+          "relations": [],
+          "semantic_clauses": [],
+          "group_by": [],
+          "aggregations": [
+            {
+              "field": "order_items.quantity",
+              "agg": "sum",
+              "alias": "total_sales"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "full",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "select": [
+            {
+              "expr": "product_id"
+            },
+            {
+              "expr": "name"
+            },
+            {
+              "expr": "price"
+            }
+          ],
+          "filters": {
+            "type": "comparison",
+            "field": "name",
+            "op": ">",
+            "value": "product with most sales"
+          },
+          "relations": [],
+          "semantic_clauses": [],
+          "group_by": [],
+          "aggregations": [
+            {
+              "field": "order_items.quantity",
+              "agg": "sum",
+              "alias": "total_sales"
+            }
+          ],
+          "limit": null,
+          "offset": null,
+          "case_sensitivity": false
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "full",
+  "selectors": {
+    "op": "query",
+    "root_entity": "products",
+    "select": [
+      {
+        "expr": "product_id"
+      },
+      {
+        "expr": "name"
+      },
+      {
+        "expr": "price"
+      }
+    ],
+    "filters": {
+      "type": "comparison",
+      "field": "name",
+      "op": ">",
+      "value": "product with most sales"
+    },
+    "relations": [],
+    "semantic_clauses": [],
+    "group_by": [],
+    "aggregations": [
+      {
+        "field": "order_items.quantity",
+        "agg": "sum",
+        "alias": "total_sales"
+      }
+    ],
+    "limit": null,
+    "offset": null,
+    "case_sensitivity": false
+  },
+  "max_tokens": 2000
+}
+

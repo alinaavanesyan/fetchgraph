@@ -1,0 +1,136 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "extract(year from order_date) as year",
+              "alias": "year"
+            },
+            {
+              "expr": "extract(month from order_date) as month",
+              "alias": "month"
+            },
+            {
+              "expr": "count(*) as order_count"
+            }
+          ],
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "month"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "order_count",
+              "agg": "sum"
+            }
+          ]
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_qa"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_qa",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "select": [
+            {
+              "expr": "extract(year from order_date) as year",
+              "alias": "year"
+            },
+            {
+              "expr": "extract(month from order_date) as month",
+              "alias": "month"
+            },
+            {
+              "expr": "count(*) as order_count"
+            }
+          ],
+          "group_by": [
+            {
+              "entity": "orders",
+              "field": "month"
+            }
+          ],
+          "aggregations": [
+            {
+              "field": "order_count",
+              "agg": "sum"
+            }
+          ]
+        },
+        "max_tokens": 2000
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_qa",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "select": [
+      {
+        "expr": "extract(year from order_date) as year",
+        "alias": "year"
+      },
+      {
+        "expr": "extract(month from order_date) as month",
+        "alias": "month"
+      },
+      {
+        "expr": "count(*) as order_count"
+      }
+    ],
+    "group_by": [
+      {
+        "entity": "orders",
+        "field": "month"
+      }
+    ],
+    "aggregations": [
+      {
+        "field": "order_count",
+        "agg": "sum"
+      }
+    ]
+  },
+  "max_tokens": 2000
+}
+
