@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, Optional
 
 from .types import SelectorsDict
 
 _AGG_REGEX = re.compile(r"^(?P<agg>[a-zA-Z_][\w]*)\s*\(\s*(?P<field>[^)]+)\s*\)$")
+logger = logging.getLogger(__name__)
 
 
 def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
+    logger.info("Relational selectors normalization (before): %s", selectors)
     if not isinstance(selectors, dict):
+        logger.info("Relational selectors normalization (after): %s", selectors)
         return selectors
     normalized = dict(selectors)
     if normalized.get("op") != "query":
+        logger.info("Relational selectors normalization (after): %s", normalized)
         return normalized
     normalized["aggregations"] = _normalize_aggregations(normalized.get("aggregations"))
     normalized["group_by"] = _normalize_group_by(normalized.get("group_by"))
     normalized_filters = _normalize_filters(normalized.get("filters"))
     normalized["filters"] = normalized_filters
     normalized = _normalize_min_max_filter(normalized, normalized_filters)
+    logger.info("Relational selectors normalization (after): %s", normalized)
     return normalized
 
 
