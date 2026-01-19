@@ -1309,7 +1309,8 @@ main() {
     logs)
       local name="${1:-}"
       shift || true
-      local services=("$@")
+      local services=()
+      services+=("$@")
 
       if [[ -z "$name" ]]; then
         name="$(get_active_profile)"; [[ -n "$name" ]] || die "no active profile; use: $PROG logs <name>"
@@ -1328,7 +1329,7 @@ main() {
         fi
       fi
 
-      compose_logs "$name" "${services[@]}"
+      compose_logs "$name" "${services[@]:-}"
       ;;
     delete|rm|remove)
       local name="${1:-}"; [[ -n "$name" ]] || die "usage: $PROG delete <name> [--yes]"
