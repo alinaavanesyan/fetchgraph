@@ -12,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from fetchgraph.relational.models import RelationalQuery
-from fetchgraph.relational.normalize import normalize_relational_selectors
+from fetchgraph.relational.normalize import _normalize_group_by, normalize_relational_selectors
 
 # -----------------------------
 # Plan-trace parsing
@@ -180,25 +180,26 @@ def test_normalizer_outputs_valid_relational_query(case: TraceCase) -> None:
 
 
 def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
-    selectors = {
-        "op": "query",
-        "group_by": [
+    normalized = _normalize_group_by(
+        [
             "country",
             None,
             {"field": "region"},
             {"field": "  city  ", "entity": "location"},
             {"field": ""},
             123,
-        ],
-    }
+        ]
+    )
 
-    normalized = normalize_relational_selectors(copy.deepcopy(selectors))
-
-    assert normalized["group_by"] == [
+    assert normalized == [
         {"field": "country"},
         {"field": "region"},
         {"field": "city", "entity": "location"},
     ]
+
+    assert _normalize_group_by("country") == [{"field": "country"}]
+    assert _normalize_group_by({"field": "region"}) == [{"field": "region"}]
+    assert _normalize_group_by(123) == []
 
 
 # Этот тест кейс и раньше не работал, так что это не регрессия
