@@ -178,6 +178,23 @@ def test_normalizer_outputs_valid_relational_query(case: TraceCase) -> None:
             f"Normalized selectors (truncated): {json.dumps(normalized, ensure_ascii=False)[:2000]}"
         )
 
+def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
+    normalized = _normalize_group_by(
+        [
+            "country",
+            None,
+            {"field": "region"},
+            {"field": "  city  ", "entity": "location"},
+            {"field": ""},
+            123,
+        ]
+    )
+
+    assert normalized == [
+        {"field": "country"},
+        {"field": "region"},
+        {"field": "city", "entity": "location"},
+    ]
 
 def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
     normalized = _normalize_group_by(
