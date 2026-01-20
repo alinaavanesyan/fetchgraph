@@ -55,7 +55,7 @@ def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
 
 def _normalize_aggregations(value: Any) -> Any:
     if value is None:
-        return []
+        return None
     if not isinstance(value, list):
         value = [value]
     normalized: list[Any] = []
@@ -139,10 +139,16 @@ def _normalize_min_max_filter(selectors: SelectorsDict, filters: Any) -> Selecto
 def _normalize_group_by(value: Any) -> Any:
     if not isinstance(value, list):
         return value
-    normalized: list[Any] = []
+    normalized: list[dict[str, Any]] = []
     for item in value:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            field = item.strip()
+            if field:
+                normalized.append({"field": field})
+            continue
         if not isinstance(item, dict):
-            normalized.append(item)
             continue
         field = item.get("field")
         if not isinstance(field, str) or not field.strip():
