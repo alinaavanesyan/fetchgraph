@@ -179,6 +179,28 @@ def test_normalizer_outputs_valid_relational_query(case: TraceCase) -> None:
         )
 
 
+def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
+    selectors = {
+        "op": "query",
+        "group_by": [
+            "country",
+            None,
+            {"field": "region"},
+            {"field": "  city  ", "entity": "location"},
+            {"field": ""},
+            123,
+        ],
+    }
+
+    normalized = normalize_relational_selectors(copy.deepcopy(selectors))
+
+    assert normalized["group_by"] == [
+        {"field": "country"},
+        {"field": "region"},
+        {"field": "city", "entity": "location"},
+    ]
+
+
 # Этот тест кейс и раньше не работал, так что это не регрессия
 
 # def test_min_max_filter_normalization_does_not_corrupt_aggregations() -> None:
@@ -201,4 +223,3 @@ def test_normalizer_outputs_valid_relational_query(case: TraceCase) -> None:
 #             assert isinstance(aggs, list)
 #             assert all(isinstance(x, dict) for x in aggs), f"aggregations must be list[dict], got: {aggs}"
 #         pytest.fail("RelationalQuery.model_validate failed for unknown reason (not aggregations-shape).")
-
