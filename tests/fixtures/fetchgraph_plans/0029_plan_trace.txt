@@ -1,0 +1,81 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_users"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_users",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "users",
+          "aggregations": [
+            {
+              "field": "created_at",
+              "agg": "sum",
+              "alias": "metric_29"
+            }
+          ]
+        },
+        "max_tokens": 129
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_users"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_users",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "users",
+          "aggregations": [
+            {
+              "field": "created_at",
+              "agg": "sum",
+              "alias": "metric_29"
+            }
+          ]
+        },
+        "max_tokens": 129
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_users",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "users",
+    "aggregations": [
+      {
+        "field": "created_at",
+        "agg": "sum",
+        "alias": "metric_29"
+      }
+    ]
+  },
+  "max_tokens": 129
+}

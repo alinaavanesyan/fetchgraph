@@ -196,10 +196,29 @@ def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
         {"field": "city", "entity": "location"},
     ]
 
+def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
+    normalized = _normalize_group_by(
+        [
+            "country",
+            None,
+            {"field": "region"},
+            {"field": "  city  ", "entity": "location"},
+            {"field": ""},
+            123,
+        ]
+    )
+
+    assert normalized == [
+        {"field": "country"},
+        {"field": "region"},
+        {"field": "city", "entity": "location"},
+    ]
+
     assert _normalize_group_by("country") == [{"field": "country"}]
     assert _normalize_group_by({"field": "region"}) == [{"field": "region"}]
     assert _normalize_group_by(123) == []
-    
+
+
 # Этот тест кейс и раньше не работал, так что это не регрессия
 
 # def test_min_max_filter_normalization_does_not_corrupt_aggregations() -> None:
@@ -222,4 +241,3 @@ def test_normalize_group_by_coerces_strings_and_skips_invalid() -> None:
 #             assert isinstance(aggs, list)
 #             assert all(isinstance(x, dict) for x in aggs), f"aggregations must be list[dict], got: {aggs}"
 #         pytest.fail("RelationalQuery.model_validate failed for unknown reason (not aggregations-shape).")
-
