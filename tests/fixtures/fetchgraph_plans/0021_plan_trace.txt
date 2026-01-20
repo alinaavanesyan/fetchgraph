@@ -1,0 +1,81 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_sales"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_sales",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "aggregations": [
+            {
+              "field": "order_id",
+              "agg": "sum",
+              "alias": "metric_21"
+            }
+          ]
+        },
+        "max_tokens": 121
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_sales"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_sales",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "orders",
+          "aggregations": [
+            {
+              "field": "order_id",
+              "agg": "sum",
+              "alias": "metric_21"
+            }
+          ]
+        },
+        "max_tokens": 121
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_sales",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "orders",
+    "aggregations": [
+      {
+        "field": "order_id",
+        "agg": "sum",
+        "alias": "metric_21"
+      }
+    ]
+  },
+  "max_tokens": 121
+}

@@ -1,0 +1,81 @@
+{
+  "stage": "before_normalize",
+  "plan": {
+    "required_context": [
+      "demo_products"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_products",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "aggregations": [
+            {
+              "field": "status",
+              "agg": "sum",
+              "alias": "metric_43"
+            }
+          ]
+        },
+        "max_tokens": 143
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": []
+  }
+}
+
+{
+  "stage": "after_normalize",
+  "plan": {
+    "required_context": [
+      "demo_products"
+    ],
+    "context_plan": [
+      {
+        "provider": "demo_products",
+        "mode": "slice",
+        "selectors": {
+          "op": "query",
+          "root_entity": "products",
+          "aggregations": [
+            {
+              "field": "status",
+              "agg": "sum",
+              "alias": "metric_43"
+            }
+          ]
+        },
+        "max_tokens": 143
+      }
+    ],
+    "adr_queries": null,
+    "constraints": null,
+    "entities": [],
+    "dtos": [],
+    "normalization_notes": []
+  }
+}
+
+{
+  "stage": "fetch_request",
+  "provider": "demo_products",
+  "provider_class": "PandasRelationalDataProvider",
+  "mode": "slice",
+  "selectors": {
+    "op": "query",
+    "root_entity": "products",
+    "aggregations": [
+      {
+        "field": "status",
+        "agg": "sum",
+        "alias": "metric_43"
+      }
+    ]
+  },
+  "max_tokens": 143
+}
