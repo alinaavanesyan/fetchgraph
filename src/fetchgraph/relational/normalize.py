@@ -55,7 +55,7 @@ def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
 
 def _normalize_aggregations(value: Any) -> Any:
     if value is None:
-        return []
+        return None
     if not isinstance(value, list):
         value = [value]
     normalized: list[Any] = []

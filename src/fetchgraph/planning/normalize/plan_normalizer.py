@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
 
 from ...core.models import ContextFetchSpec, Plan, ProviderInfo
 from ...core.protocols import ContextProvider, SupportsDescribe, SupportsFilter
+from ...relational.models import RelationalRequest
+from ...relational.normalize import normalize_relational_selectors
+from ...relational.providers.base import RelationalDataProvider
+
+logger = logging.getLogger(__name__)
 
 
 class NormalizedPlan(Plan):
@@ -27,15 +33,23 @@ class PlanNormalizerOptions:
     default_mode: str = "full"
 
 
+@dataclass(frozen=True)
+class SelectorNormalizationRule:
+    validator: TypeAdapter[Any]
+    normalize_selectors: Callable[[Any], Any]
+
+
 class PlanNormalizer:
     def __init__(
         self,
         provider_catalog: Dict[str, ProviderInfo],
         schema_registry: Optional[Dict[str, Dict[str, Any]]] = None,
+        normalizer_registry: Optional[Dict[str, SelectorNormalizationRule]] = None,
         options: Optional[PlanNormalizerOptions] = None,
     ) -> None:
         self.provider_catalog = dict(provider_catalog)
         self.schema_registry = schema_registry or {}
+        self.normalizer_registry = normalizer_registry or {}
         self.options = options or PlanNormalizerOptions()
         self._provider_aliases = self._build_provider_aliases(self.provider_catalog)
 
@@ -48,6 +62,7 @@ class PlanNormalizer:
     ) -> "PlanNormalizer":
         catalog: Dict[str, ProviderInfo] = {}
         schema_registry: Dict[str, Dict[str, Any]] = {}
+        normalizer_registry: Dict[str, SelectorNormalizationRule] = {}
         for key, prov in providers.items():
             info: Optional[ProviderInfo] = None
             if isinstance(prov, SupportsDescribe):
@@ -63,7 +78,17 @@ class PlanNormalizer:
             catalog[key] = info
             if info.selectors_schema:
                 schema_registry[key] = info.selectors_schema
-        return cls(catalog, schema_registry=schema_registry, options=options)
+            if isinstance(prov, RelationalDataProvider):
+                normalizer_registry[key] = SelectorNormalizationRule(
+                    validator=TypeAdapter(RelationalRequest),
+                    normalize_selectors=normalize_relational_selectors,
+                )
+        return cls(
+            catalog,
+            schema_registry=schema_registry,
+            normalizer_registry=normalizer_registry,
+            options=options,
+        )
 
     def normalize(self, plan: Plan) -> NormalizedPlan:
         notes: List[str] = []
@@ -98,6 +123,90 @@ class PlanNormalizer:
             normalization_notes=notes,
         )
         return normalized
+
+    def normalize_specs(
+        self,
+        specs: Iterable[ContextFetchSpec],
+        *,
+        notes: Optional[List[str]] = None,
+    ) -> List[ContextFetchSpec]:
+        local_notes: List[str] = []
+        normalized = self._normalize_specs(specs, local_notes)
+        if notes is not None:
+            notes.extend(local_notes)
+        if local_notes:
+            logger.debug(
+                "PlanNormalizer selectors normalization notes: %s",
+                "; ".join(local_notes),
+            )
+        return normalized
+
+    def _normalize_specs(
+        self, specs: Iterable[ContextFetchSpec], notes: List[str]
+    ) -> List[ContextFetchSpec]:
+        normalized: List[ContextFetchSpec] = []
+        for spec in specs:
+            rule = self.normalizer_registry.get(spec.provider)
+            if rule is None:
+                normalized.append(spec)
+                continue
+            orig = spec.selectors
+            before_ok = self._validate_selectors(rule.validator, orig)
+            decision = "keep_original_valid" if before_ok else "keep_original_still_invalid"
+            use = orig
+            after_ok = before_ok
+            if not before_ok:
+                candidate = rule.normalize_selectors(orig)
+                after_ok = self._validate_selectors(rule.validator, candidate)
+                if after_ok:
+                    decision = "use_normalized_fixed"
+                    use = candidate
+            notes.append(
+                self._format_selectors_note(
+                    spec.provider,
+                    before_ok,
+                    after_ok,
+                    decision,
+                    selectors_before=orig,
+                    selectors_after=use,
+                )
+            )
+            if use is orig:
+                normalized.append(spec)
+                continue
+            data = spec.model_dump()
+            data["selectors"] = use
+            normalized.append(ContextFetchSpec(**data))
+        return normalized
+
+    @staticmethod
+    def _validate_selectors(adapter: TypeAdapter[Any], selectors: Any) -> bool:
+        try:
+            adapter.validate_python(selectors)
+        except ValidationError:
+            return False
+        return True
+
+    @staticmethod
+    def _format_selectors_note(
+        provider: str,
+        before_ok: bool,
+        after_ok: bool,
+        decision: str,
+        *,
+        selectors_before: Any,
+        selectors_after: Any,
+    ) -> str:
+        payload = {
+            "provider": provider,
+            "selectors_validate_before": "ok" if before_ok else "error",
+            "selectors_validate_after": "ok" if after_ok else "error",
+            "selectors_normalization_decision": decision,
+        }
+        if decision != "keep_original_valid":
+            payload["selectors_before"] = selectors_before
+            payload["selectors_after"] = selectors_after
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
     def _normalize_required_context(
         self, values: Iterable[str], notes: List[str]

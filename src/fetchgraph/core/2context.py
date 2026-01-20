@@ -536,6 +536,18 @@ class BaseGraphAgent:
     def _fetch(self, feature_name: str, plan: Plan) -> Dict[str, ContextItem]:
         t0 = time.perf_counter()
         specs = self._merge_baseline_with_plan(plan)
+        if self.plan_normalizer is not None:
+            normalization_notes: List[str] = []
+            specs = self.plan_normalizer.normalize_specs(
+                specs, notes=normalization_notes
+            )
+            if normalization_notes:
+                self._append_plan_trace(
+                    {
+                        "stage": "selectors_normalization",
+                        "notes": normalization_notes,
+                    }
+                )
         logger.info(
             "Fetching context for feature_name=%r using %d specs",
             feature_name,
