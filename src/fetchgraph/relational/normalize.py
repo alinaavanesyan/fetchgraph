@@ -137,8 +137,13 @@ def _normalize_min_max_filter(selectors: SelectorsDict, filters: Any) -> Selecto
 
 
 def _normalize_group_by(value: Any) -> Any:
+    if value is None:
+        return []
     if not isinstance(value, list):
-        return value
+        if isinstance(value, (str, dict)):
+            value = [value]
+        else:
+            return []
     normalized: list[dict[str, Any]] = []
     for item in value:
         if item is None:
@@ -151,9 +156,10 @@ def _normalize_group_by(value: Any) -> Any:
         if not isinstance(item, dict):
             continue
         field = item.get("field")
-        if not isinstance(field, str) or not field.strip():
-            continue
-        normalized.append(item)
+        if isinstance(field, str) and field.strip():
+            entry = dict(item)
+            entry["field"] = field.strip()
+            normalized.append(entry)
     return normalized
 
 
