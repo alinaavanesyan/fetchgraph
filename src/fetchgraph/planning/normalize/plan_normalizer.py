@@ -152,8 +152,12 @@ class PlanNormalizer:
                 continue
             orig = spec.selectors
             before_ok = self._validate_selectors(rule.validator, orig)
+            # Start with the conservative decision: keep the original selectors.
+            # If they validate, we never change them. If they do not validate,
+            # we only switch to a normalized payload once it passes validation.
             decision = "keep_original_valid" if before_ok else "keep_original_still_invalid"
             use = orig
+            # Track validation status after any normalization attempt.
             after_ok = before_ok
             if not before_ok:
                 candidate = rule.normalize_selectors(orig)
