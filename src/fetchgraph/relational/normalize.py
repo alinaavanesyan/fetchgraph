@@ -140,7 +140,10 @@ def _normalize_group_by(value: Any) -> Any:
     if value is None:
         return []
     if not isinstance(value, list):
-        value = [value]
+        if isinstance(value, (str, dict)):
+            value = [value]
+        else:
+            return []
     normalized: list[dict[str, Any]] = []
     for item in value:
         if item is None:
