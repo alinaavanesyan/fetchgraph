@@ -163,6 +163,9 @@ class PlanNormalizer:
                 if after_ok:
                     decision = "use_normalized_fixed"
                     use = candidate
+                elif candidate != orig:
+                    decision = "use_normalized_unvalidated"
+                    use = candidate
             notes.append(
                 self._format_selectors_note(
                     spec.provider,
