@@ -9,7 +9,7 @@ produced SQL-like queries before they are converted into structured selectors.
 
 from dataclasses import replace
 import re
-from typing import Dict, Iterable, Mapping, Optional, Sequence
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Literal, cast
 
 from .ast import (
     ColumnRef,
@@ -130,7 +130,7 @@ def _normalize_expression(expr: Expression) -> Expression:
             right=_normalize_expression(expr.right),
         )
     if isinstance(expr, Logical):
-        op = expr.op.lower()
+        op = cast(Literal["and", "or"], expr.op.lower())
         clauses: list[Expression] = []
         for clause in expr.clauses:
             normalized_clause = _normalize_expression(clause)
@@ -180,11 +180,11 @@ def _normalize_identifier(value: Optional[str]) -> str:
     return cleaned.lower()
 
 
-def _normalize_order_direction(direction: str) -> str:
+def _normalize_order_direction(direction: str) -> Literal["asc", "desc"]:
     cleaned = direction.strip().lower()
     if cleaned not in {"asc", "desc"}:
         return "asc"
-    return cleaned
+    return cast(Literal["asc", "desc"], cleaned)
 
 
 def _normalize_limit(value: Optional[int]) -> Optional[int]:
