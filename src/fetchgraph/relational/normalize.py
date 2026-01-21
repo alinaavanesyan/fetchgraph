@@ -37,7 +37,11 @@ def normalize_relational_selectors(selectors: SelectorsDict) -> SelectorsDict:
     
     normalized: dict[str, Any] = dict(selectors)
 
-    if normalized.get("op") != "query":
+    op = normalized.get("op")
+    if op == "aggregate":
+        normalized["op"] = "query"
+        op = "query"
+    if op != "query":
         return normalized
     
     _set_list_field(
