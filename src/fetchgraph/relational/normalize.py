@@ -128,7 +128,13 @@ def _normalize_min_max_filter(selectors: SelectorsDict, filters: Any) -> Selecto
     field = filters.get("field")
     if not isinstance(field, str) or not field.strip():
         return selectors
-    aggregations = list(selectors.get("aggregations") or [])
+    raw_aggregations = selectors.get("aggregations")
+    if isinstance(raw_aggregations, list):
+        aggregations = list(raw_aggregations)
+    elif raw_aggregations is None:
+        aggregations = []
+    else:
+        aggregations = [raw_aggregations]
     aggregations.append({"field": field, "agg": op_lower, "alias": f"{op_lower}_{field}"})
     normalized = dict(selectors)
     normalized["aggregations"] = _normalize_aggregations(aggregations)
