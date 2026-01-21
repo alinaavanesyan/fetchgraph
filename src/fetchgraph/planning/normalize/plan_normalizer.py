@@ -108,6 +108,8 @@ class PlanNormalizer:
             if required_context:
                 notes.append("context_plan_filled_from_required_context")
 
+        context_plan = self._normalize_specs(context_plan, notes)
+
         adr_queries = self._normalize_text_list(plan.adr_queries, notes, "adr_queries")
         constraints = self._normalize_text_list(
             plan.constraints, notes, "constraints"
