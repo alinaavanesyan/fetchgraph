@@ -18,12 +18,19 @@ python -m examples.demo_qa.cli gen --out demo_data --rows 1000 --seed 42
 См. шаблон `examples/demo_qa/demo_qa.toml.example`.
 Автопоиск: `--config`, затем `<DATA_DIR>/demo_qa.toml`, затем `examples/demo_qa/demo_qa.toml`.
 `llm.api_key` можно опустить: при инициализации LLM используется `OPENAI_API_KEY`, а при его отсутствии — строка `"unused"`.
+Чтобы передать ключи в LLM-прокси (например, для Groq), используйте `llm.headers`:
+```
+[llm]
+base_url = "http://localhost:8000/v1"
+headers.x-api-key = "gsk_..."
+```
 
 ### .env.demo_qa
 Пример:
 ```
 DEMO_QA_LLM__API_KEY=env:OPENAI_API_KEY
 DEMO_QA_LLM__BASE_URL=http://localhost:8000/v1
+DEMO_QA_LLM__HEADERS__X_API_KEY=gsk_...
 ```
 
 ### Env vars напрямую
